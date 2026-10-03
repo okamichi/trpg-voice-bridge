@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>卓の音声 | TRPG Voice Bridge</title
+  ><link rel="stylesheet" href="/web/style.css" />
+  <main class="player">
+    <p class="eyebrow">TRPG VOICE BRIDGE</p>
+    <h1>物語に、声を。</h1>
+    <p>音声を有効にすると、この卓の新しいセリフが順番に流れます。</p>
+    <p id="status" role="status">接続しています…</p>
+    <button id="enable">音声を有効にする</button
+    ><button id="latest" class="secondary">最新へ戻る</button
+    ><label
+      >音量
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8"
+    /></label>
+    <h2 id="speaker">次の発言を待っています</h2>
+    <p id="caption"></p>
+    <details>
+      <summary>キャラクター別ミュート</summary>
+      <div id="mutes"></div>
+    </details>
+    <p class="muted">
+      画面ロックや長い中断の後は、再開ボタンを押してください。
+    </p>
+  </main>
+  <script type="module" src="/web/player.js"></script>
+</html>

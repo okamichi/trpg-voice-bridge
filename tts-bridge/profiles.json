@@ -1,0 +1,46 @@
+{
+  "melissa": {
+    "name": "メリッサ",
+    "revision": "1",
+    "voice": "none",
+    "caption": "透明感のある若い女性の声。明るく可愛らしく、クリアで聞き取りやすい声。柔らかく自然な話し方。",
+    "seed": "1520596899881326291",
+    "steps": 10,
+    "speed": 1,
+    "allowCharacterOverrides": true,
+    "styles": { "default": {} }
+  },
+  "ornithogalum": {
+    "name": "オーニソガラム",
+    "revision": "1",
+    "voice": "none",
+    "caption": "澄んだ中性的な声。若々しく透明感があり、落ち着いた知性と気品を感じさせる。エルフのウィザードらしく、言葉を丁寧に選び、柔らかく静かに語る。自然で聞き取りやすい話し方。",
+    "seed": "2634517809123456789",
+    "steps": 10,
+    "speed": 1,
+    "allowCharacterOverrides": true,
+    "styles": { "default": {} }
+  },
+  "doo-koo": {
+    "name": "ドゥー・クー",
+    "revision": "1",
+    "voice": "none",
+    "caption": "低めで、少しかすれを含む年配の男性の声。長い年月を生きたドルイドらしい落ち着きと、自然を愛する温かみがある。ゆったりと穏やかに、親しみやすく語る。息切れせず、言葉は明瞭で聞き取りやすい。",
+    "seed": "3745628910234567890",
+    "steps": 10,
+    "speed": 0.9,
+    "allowCharacterOverrides": true,
+    "styles": { "default": {} }
+  },
+  "rimaldo": {
+    "name": "リマルド",
+    "revision": "1",
+    "voice": "none",
+    "caption": "低く、芯が太い成人男性の声。男性戦士らしい力強さと頼もしさがあり、飾らず率直に話す。落ち着いた自信を感じさせ、言葉をはっきりと発音する。威圧的に怒鳴らず、自然で聞き取りやすい話し方。",
+    "seed": "4856739021345678901",
+    "steps": 10,
+    "speed": 1,
+    "allowCharacterOverrides": true,
+    "styles": { "default": {} }
+  }
+}

@@ -1,0 +1,35 @@
+body {
+  width: 340px;
+  padding: 16px;
+  background: #102033;
+  color: #edf5fa;
+  font: 13px/1.6 system-ui;
+}
+h1 {
+  font-size: 19px;
+}
+label {
+  display: block;
+}
+input,
+select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px;
+  margin: 4px 0 10px;
+  background: #20364a;
+  color: white;
+  border: 1px solid #527080;
+  border-radius: 4px;
+}
+button {
+  padding: 9px;
+  border: 0;
+  border-radius: 4px;
+  background: #8ce0cf;
+  margin-right: 8px;
+}
+#status {
+  white-space: pre-wrap;
+  color: #c5e7dc;
+}

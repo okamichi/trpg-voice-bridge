@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+  <meta charset="utf-8" /><title>TRPG Voice Collector</title
+  ><link rel="stylesheet" href="popup.css" />
+  <h1>卓のチャットを接続</h1>
+  <p>現在のタブを取得元にします。開始前の履歴は読みません。</p>
+  <form id="settings">
+    <label
+      >Bridge URL<input
+        name="bridge"
+        value="http://127.0.0.1:8090"
+        required /></label
+    ><label
+      >Collectorトークン<input name="token" type="password" required /></label
+    ><label
+      >ツール<select name="adapter">
+        <option value="fvtt">FVTT 12・13・14</option>
+        <option value="udonarium">ユドナリウム（実験的）</option>
+        <option value="ccfolia">ココフォリア（取得方法の検証待ち）</option>
+      </select></label
+    ><label>入力元ID<input name="instanceId" value="my-vtt" required /></label
+    ><label>部屋・ワールドID<input name="contextId" required /></label
+    ><label>対象チャット<input name="channel" value="main" required /></label>
+    <p>
+      ユドナリウムでは対象チャットを表示してください。ココフォリアは現在、診断のみです。
+    </p>
+    <button>このタブを接続</button
+    ><button type="button" id="stop">取得を停止</button>
+  </form>
+  <p id="status" role="status"></p>
+  <script src="popup.js"></script>
+</html>
