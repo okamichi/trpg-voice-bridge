@@ -1,3 +1,4 @@
+import { refreshCharacters } from "./characters.js";
 import { Playback } from "./playback.js";
 const $ = (id) => document.getElementById(id),
   clientId = crypto.randomUUID();
@@ -142,6 +143,7 @@ function connect() {
   socket.onmessage = (event) => {
     const n = JSON.parse(event.data);
     if (n.type === "hello") {
+      refreshCharacters(n.roomId);
       offset = n.serverTime - Date.now();
       retry = 1000;
       if (!n.resumed) fresh(n);
@@ -163,7 +165,7 @@ function connect() {
     }
     if (n.type === "playback.reset") {
       fresh(n);
-      status("GMが全停止しました");
+      status("読み上げが停止されました");
       return;
     }
     if (n.notificationSeq <= notificationSeq) return;
@@ -172,6 +174,10 @@ function connect() {
       return;
     }
     notificationSeq = n.notificationSeq;
+    if (n.type === "characters.changed") {
+      refreshCharacters(n.roomId);
+      return;
+    }
     addCharacter(n);
     playback.accept(n);
   };
@@ -261,7 +267,7 @@ try {
     });
     if (!r.ok)
       throw new Error(
-        "招待が失効しています。GMから新しいリンクを受け取ってください",
+        "招待が失効しています。音声担当者から新しいリンクを受け取ってください",
       );
   }
   connect();

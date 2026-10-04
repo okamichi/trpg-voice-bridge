@@ -115,35 +115,85 @@ test("3 independent players hear 10 ordered messages once; reload ignores old wo
     .toEqual([id]);
   for (const c of contexts) await c.close();
 });
-test("admin GUI creates character and voice atomically, duplicate clears binding, preview stays private", async ({
+test("Player discovery, shared editing, private preview and conflicts across participants", async ({
+  browser,
+}) => {
+  await command("stop");
+  app.store.change((c) => {
+    c.characters = [];
+  });
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  const pages = await Promise.all(contexts.map((c) => c.newPage()));
+  try {
+    for (const p of pages) {
+      await observe(p);
+      await p.goto(invite);
+      await expect(p.locator("#status")).toContainText("接続しました");
+    }
+    expect(post("discovery").status).toBe("ignored");
+    for (const p of pages)
+      await expect(p.locator("#characters")).toContainText("声が未設定");
+    await pages[0].getByRole("button", { name: "声を選ぶ" }).click();
+    await pages[0].locator("[name=voice]").selectOption("new");
+    await pages[0].locator("[name=name]").fill("騎士の声");
+    await pages[0].getByRole("button", { name: "自分だけで試聴" }).click();
+    await expect(pages[0].locator("#editorStatus")).toContainText(
+      "あなたにだけ",
+    );
+    expect(
+      app.engine.history.filter((n) => n.type === "audio.ready"),
+    ).toHaveLength(0);
+    expect(await pages[1].evaluate(() => window.started)).toEqual([]);
+    await pages[0].getByRole("button", { name: "保存", exact: true }).click();
+    for (const p of pages)
+      await expect(p.locator("#characters")).toContainText("騎士の声");
+    for (const p of pages)
+      await p.getByRole("button", { name: "試聴・変更" }).click();
+    await pages[0].locator("[name=caption]").fill("落ち着いた声");
+    await pages[0].getByRole("button", { name: "保存", exact: true }).click();
+    await expect(pages[0].locator("#characterEditor")).not.toBeVisible();
+    await pages[1].locator("[name=caption]").fill("同時編集");
+    await pages[1].getByRole("button", { name: "保存", exact: true }).click();
+    await expect(pages[1].locator("#editorStatus")).toContainText(
+      "他の人が変更",
+    );
+    expect(
+      app.store.config.voiceProfiles.find((v) => v.name === "騎士の声").caption,
+    ).toBe("落ち着いた声");
+    await pages[1].getByRole("button", { name: "キャンセル" }).click();
+    await pages[0].getByRole("button", { name: "音声を有効にする" }).click();
+    await command("start");
+    expect(app.engine.orders.size).toBe(0);
+    const next = post("after-save");
+    await expect
+      .poll(() => pages[0].evaluate(() => window.started))
+      .toEqual([next.orderId]);
+    await pages[0].screenshot({
+      path: "verification/player-settings.png",
+      fullPage: true,
+    });
+  } finally {
+    for (const c of contexts) await c.close();
+  }
+});
+test("management startup link, simplified controls and reset confirmation", async ({
   page,
 }) => {
-  await page.goto(base + "/admin/");
-  await page.locator("#token").fill(app.store.secrets.admin);
-  await page.getByRole("button", { name: "接続", exact: true }).click();
-  await expect(page.locator("#workspace")).toBeVisible();
-  await page.getByRole("button", { name: "キャラ追加" }).click();
-  await page.locator("[name=displayName]").fill("テストの騎士");
-  await page.locator("[name=voiceProfileId]").selectOption("__new");
-  await page.locator("[name=new_name]").fill("騎士の声");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page.locator("#characters")).toContainText("テストの騎士");
-  await expect(page.locator("#voices")).toContainText("騎士の声");
-  expect(
-    app.store.config.characters.find((c) => c.displayName === "テストの騎士")
-      .voiceProfileId,
-  ).toBe(app.store.config.voiceProfiles.find((v) => v.name === "騎士の声").id);
-  await page
-    .locator("#voices .list-item")
-    .filter({ hasText: "騎士の声" })
-    .getByRole("button", { name: "編集・試聴" })
-    .click();
-  await page.getByRole("button", { name: "未保存の設定で試聴" }).click();
-  await expect(page.locator("#preview audio")).toBeVisible();
-  expect(
-    app.engine.history.filter((n) => n.type === "audio.ready"),
-  ).toHaveLength(0);
-  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+  await page.goto(app.adminUrl());
+  await expect(page.locator("#connection")).toContainText("接続済み");
+  await page.getByRole("button", { name: "読み上げ停止", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "読み上げ開始", exact: true }),
+  ).toBeEnabled();
+  expect(app.engine.accepting).toBe(false);
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Playerを開く" }).click();
+  const player = await popupPromise;
+  await expect(player.locator("#characters")).toContainText("メリッサ");
+  await page.getByText("詳細設定", { exact: true }).click();
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "設定を初期値に戻す" }).click();
+  await expect(page.locator("#notice")).toContainText("実行しました");
   await page.screenshot({ path: "verification/admin.png", fullPage: true });
 });
 test("FVTT injected adapter excludes whisper, blind, OOC, rolls and secrets; no render/history hook", async ({

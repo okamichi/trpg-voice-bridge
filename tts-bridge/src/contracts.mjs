@@ -84,8 +84,6 @@ export function voiceSchema(v) {
   const supported = [
     "id",
     "name",
-    "revision",
-    "referenceRevision",
     "provider",
     "voiceId",
     "caption",
@@ -100,15 +98,7 @@ export function voiceSchema(v) {
     Object.keys(v).every((k) => supported.includes(k)),
     "未対応の音声パラメーターです",
   );
-  check(
-    id(v.id) &&
-      str(v.name) &&
-      Number.isInteger(v.revision) &&
-      v.revision > 0 &&
-      Number.isInteger(v.referenceRevision) &&
-      v.referenceRevision > 0,
-    "声のID・名称・版が不正です",
-  );
+  check(id(v.id) && str(v.name), "声のID・名称が不正です");
   check(
     v.provider === "irodori-local" &&
       typeof v.voiceId === "string" &&
@@ -140,10 +130,7 @@ export function voiceSchema(v) {
       );
 }
 export function configSchema(c) {
-  check(
-    c?.configVersion === 1 && Number.isInteger(c.revision) && id(c.roomId),
-    "設定形式が不正です",
-  );
+  check(c?.configVersion === 1 && id(c.roomId), "設定形式が不正です");
   check(
     Array.isArray(c.allowedChannels) &&
       c.allowedChannels.length > 0 &&
@@ -174,7 +161,6 @@ export function configSchema(c) {
   );
   check(
     c.provider.model === "irodori-tts" &&
-      str(c.provider.runtimeRevision) &&
       ["irodori", "mock"].includes(c.provider.type),
     "Provider設定が不正です",
   );
@@ -199,7 +185,7 @@ export function configSchema(c) {
         id(ch.id) &&
         str(ch.displayName) &&
         typeof ch.enabled === "boolean" &&
-        voices.has(ch.voiceProfileId) &&
+        (ch.voiceProfileId === null || voices.has(ch.voiceProfileId)) &&
         Array.isArray(ch.bindings) &&
         ch.bindings.length <= 100,
       "キャラクター設定が不正です",

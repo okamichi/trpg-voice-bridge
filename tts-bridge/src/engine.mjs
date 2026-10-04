@@ -15,9 +15,8 @@ import {
   eventSchema,
   eventKey,
   sourceKey,
-  resolveCharacter,
 } from "./contracts.mjs";
-import { synthesize, inspectWav, payload, AUDIO_LIMIT } from "./provider.mjs";
+import { synthesize, inspectWav, AUDIO_LIMIT } from "./provider.mjs";
 export class Engine extends EventEmitter {
   constructor(store, options = {}) {
     super();
@@ -30,9 +29,7 @@ export class Engine extends EventEmitter {
     this.accepting = false;
     this.orders = new Map();
     this.audio = new Map();
-    this.cache = new Map();
     this.collectors = new Map();
-    this.unmapped = new Map();
     this.history = [];
     this.queue = [];
     this.busy = false;
@@ -102,7 +99,7 @@ export class Engine extends EventEmitter {
     check(body?.source && typeof body.source === "object", "入力元が必要です");
     check(
       this.config.sources.some((s) => sourceKey(s) === sourceKey(body.source)),
-      "先に管理画面で入力元を登録してください",
+      "入力元が未登録です。拡張から再接続してください",
       403,
     );
     check(
@@ -181,56 +178,42 @@ export class Engine extends EventEmitter {
     this.rate.updated = now;
     check(this.rate.tokens >= 1, "入力頻度が高すぎます", 429);
     this.rate.tokens--;
-    if (!this.accepting)
-      return { http: 200, status: "ignored", reason: "読み上げ停止中" };
     if (
       !this.config.allowedChannels.includes(e.channel) ||
       !this.config.allowedKinds.includes(e.kind)
     )
       return { http: 200, status: "ignored", reason: "対象外チャネル・種別" };
-    check(
-      !this.degraded,
-      "TTSが不調です。処理終了を確認し、管理画面で復帰してください",
-      503,
-    );
-    check(
-      this.queue.length + Number(this.busy) < 30,
-      "生成キューが満杯です",
-      429,
-    );
-    this.prune();
-    check(
-      this.audioBytes() + (this.queue.length + 1) * AUDIO_LIMIT <=
-        this.maxAudioBytes,
-      "音声保管容量が不足しています",
-      429,
-    );
-    const ch = resolveCharacter(this.config, e);
+    const { character: ch, created } = this.store.discover(e);
+    if (created) this.notify("characters.changed");
+    const enabled = this.accepting && ch?.enabled && ch.voiceProfileId;
     const orderId = randomUUID(),
-      status = ch?.enabled ? "queued" : "ignored";
+      status = enabled ? "queued" : "ignored";
+    if (enabled) {
+      check(!this.degraded, "TTSが不調です。管理画面で確認してください", 503);
+      check(
+        this.queue.length + Number(this.busy) < 30,
+        "生成キューが満杯です",
+        429,
+      );
+      this.prune();
+      check(
+        this.audioBytes() + (this.queue.length + 1) * AUDIO_LIMIT <=
+          this.maxAudioBytes,
+        "音声保管容量が不足しています",
+        429,
+      );
+    }
     const orderSeq = this.store.record(key, fingerprint, orderId, status);
-    if (!ch?.enabled) {
-      if (!ch) {
-        const u = {
-          source: {
-            adapter: e.source.adapter,
-            instanceId: e.source.instanceId,
-            contextId: e.source.contextId,
-          },
-          speaker: e.speaker,
-        };
-        this.unmapped.set(hash(u), u);
-        while (this.unmapped.size > 200)
-          this.unmapped.delete(this.unmapped.keys().next().value);
-      }
+    if (!enabled)
       return {
         http: 200,
         orderId,
         orderSeq,
         status,
-        reason: ch ? "キャラ無効" : "未登録の発言者",
+        reason: !this.accepting
+          ? "読み上げ停止中"
+          : "声が未設定またはキャラ無効",
       };
-    }
     const o = {
       orderId,
       orderSeq,
@@ -317,7 +300,7 @@ export class Engine extends EventEmitter {
   audioBytes() {
     return [...this.audio.values()].reduce((s, a) => s + a.bytes, 0);
   }
-  saveAudio(wav, key) {
+  saveAudio(wav) {
     const info = inspectWav(wav);
     check(
       this.audioBytes() + wav.length <= this.maxAudioBytes,
@@ -337,7 +320,6 @@ export class Engine extends EventEmitter {
       retainUntil: Date.now() + 600000,
     };
     this.audio.set(audioId, a);
-    if (key) this.cache.set(key, audioId);
     return a;
   }
   async pump() {
@@ -360,16 +342,7 @@ export class Engine extends EventEmitter {
         return;
       }
       this.setStatus(o, "synthesizing");
-      const key = o.reuseAudioId
-        ? null
-        : hash({
-            roomId: this.config.roomId,
-            normalization: 1,
-            payload: payload(o.text, o.voice, o.provider),
-            voice: o.voice,
-            provider: o.provider,
-          });
-      let a = this.audio.get(o.reuseAudioId ?? this.cache.get(key));
+      let a = this.audio.get(o.reuseAudioId);
       check(!o.reuseAudioId || a, "再生音声が期限切れです", 409);
       if (!a) {
         const start = performance.now();
@@ -381,7 +354,7 @@ export class Engine extends EventEmitter {
           o.status !== "synthesizing"
         )
           return;
-        a = this.saveAudio(wav, key);
+        a = this.saveAudio(wav);
       }
       if (o.epoch !== this.playbackEpoch || o.status !== "synthesizing") return;
       const now = Date.now();
@@ -461,6 +434,7 @@ export class Engine extends EventEmitter {
     }
   }
   configChanged(previous) {
+    this.notify("characters.changed");
     for (const ch of previous.characters) {
       const current = this.config.characters.find((x) => x.id === ch.id);
       if (!current || !current.enabled)
@@ -481,8 +455,6 @@ export class Engine extends EventEmitter {
         } catch {}
         this.audio.delete(id);
       }
-    for (const [k, id] of this.cache)
-      if (!this.audio.has(id)) this.cache.delete(k);
     for (const [id, o] of this.orders)
       if (
         !["queued", "synthesizing"].includes(o.status) &&

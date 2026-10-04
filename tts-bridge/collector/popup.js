@@ -1,33 +1,125 @@
 const form = document.getElementById("settings"),
   status = document.getElementById("status");
-chrome.storage.session
-  .get(["settings", "diagnostic"])
-  .then(({ settings, diagnostic }) => {
-    if (settings)
-      for (const [k, v] of Object.entries(settings))
-        if (form.elements[k]) form.elements[k].value = v;
-    status.textContent = diagnostic ?? "未接続";
+let detected,
+  tabId,
+  busy = false;
+async function send(message) {
+  const result = await chrome.runtime.sendMessage(message);
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+async function pairing(bridge) {
+  const stored =
+    (await chrome.storage.local.get("authorizations")).authorizations ?? {};
+  const auth = stored[bridge] ?? {
+    key: [...crypto.getRandomValues(new Uint8Array(32))]
+      .map((n) => n.toString(16).padStart(2, "0"))
+      .join(""),
+  };
+  if (auth.token) return auth.token;
+  const r = await fetch(bridge + "/api/v1/pairings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: auth.key }),
+    signal: AbortSignal.timeout(5000),
   });
-form.onsubmit = async (e) => {
-  e.preventDefault();
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error);
+  if (data.status === "rejected") {
+    delete stored[bridge];
+    await chrome.storage.local.set({ authorizations: stored });
+    throw new Error("接続が拒否されました。再度接続してください。");
+  }
+  if (data.token) auth.token = data.token;
+  stored[bridge] = auth;
+  await chrome.storage.local.set({ authorizations: stored });
+  if (!auth.token)
+    status.textContent = `確認コード: ${data.code} — 管理画面でこのコードの接続を承認してください。承認後にVTTのタブへ戻り「このタブを接続」を押してください。`;
+  return auth.token;
+}
+(async () => {
   try {
-    const settings = Object.fromEntries(new FormData(form));
+    const saved = await chrome.storage.local.get(["bridge", "rooms"]);
+    form.elements.bridge.value = saved.bridge ?? "http://127.0.0.1:8090";
     const [tab] = await chrome.tabs.query({
       active: true,
       currentWindow: true,
     });
-    const result = await chrome.runtime.sendMessage({
-      type: "connect",
-      settings,
-      tabId: tab.id,
-    });
-    status.textContent =
-      result.error ?? "接続しました。管理画面で読み上げを開始してください。";
+    tabId = tab.id;
+    detected = await send({ type: "detect", tabId });
+    document.getElementById("detected").textContent =
+      `${detected.adapter === "fvtt" ? "FVTT" : "ユドナリウム"} / ${detected.contextId || "部屋の識別名を入力してください"}`;
+    form.elements.contextId.value =
+      detected.contextId || saved.rooms?.[detected.instanceId] || "";
+    form.elements.channel.value = detected.channel || "";
+    document.getElementById("roomField").hidden = !!detected.contextId;
+    document.getElementById("channelField").hidden = !!detected.channel;
+    const d = await chrome.storage.session.get("diagnostic");
+    status.textContent = d.diagnostic ?? "未接続";
   } catch (e) {
     status.textContent = e.message;
+    document.getElementById("connect").disabled = true;
+  }
+})();
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  if (busy || !detected) return;
+  busy = true;
+  try {
+    const url = new URL(form.elements.bridge.value);
+    if (
+      url.protocol !== "http:" ||
+      url.hostname !== "127.0.0.1" ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    )
+      throw new Error(
+        "Bridge URLは http://127.0.0.1:ポート の形式で入力してください",
+      );
+    const bridge = url.origin;
+    const contextId =
+        detected.contextId || form.elements.contextId.value.trim(),
+      channel = detected.channel || form.elements.channel.value.trim();
+    if (!contextId || !channel)
+      throw new Error("部屋の識別名と対象チャットが必要です");
+    const rooms = (await chrome.storage.local.get("rooms")).rooms ?? {};
+    rooms[detected.instanceId] = contextId;
+    await chrome.storage.local.set({ bridge, rooms });
+    const token = await pairing(bridge);
+    if (!token) return;
+    try {
+      await send({
+        type: "connect",
+        tabId,
+        settings: { ...detected, contextId, channel, bridge, token },
+      });
+    } catch (e) {
+      if (e.message.includes("Collectorトークン")) {
+        const d = await chrome.storage.local.get("authorizations");
+        delete d.authorizations[bridge];
+        await chrome.storage.local.set(d);
+        throw new Error(
+          "承認が失効しました。もう一度接続して承認を受けてください。",
+        );
+      }
+      throw e;
+    }
+    status.textContent =
+      "接続しました。キャラとして公開発言するとPlayerに表示されます。";
+  } catch (e) {
+    status.textContent = e.message;
+  } finally {
+    busy = false;
   }
 };
 document.getElementById("stop").onclick = async () => {
-  await chrome.runtime.sendMessage({ type: "stop" });
-  status.textContent = "停止しました";
+  try {
+    await send({ type: "stop" });
+    status.textContent = "停止しました";
+  } catch (e) {
+    status.textContent = e.message;
+  }
 };

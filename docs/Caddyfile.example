@@ -1,7 +1,7 @@
 # Replace this hostname and set TTS_PUBLIC_ORIGIN=https://voice.example.com.
 # Caddy and bridge must run on the same machine for this example.
 voice.example.com {
-    @player path /player/* /web/player.js /web/playback.js /web/style.css /api/v1/join /api/v1/rooms/* /ws
+    @player path /player/* /web/player.js /web/characters.js /web/playback.js /web/style.css /api/v1/join /api/v1/rooms/* /ws
     handle @player {
         reverse_proxy 127.0.0.1:8090
     }

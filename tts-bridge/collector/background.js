@@ -159,6 +159,59 @@ async function flush() {
 }
 chrome.runtime.onMessage.addListener((m, sender, respond) => {
   (async () => {
+    if (m.type === "detect") {
+      if (sender.url !== chrome.runtime.getURL("popup.html"))
+        throw new Error("ポップアップから操作してください");
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: m.tabId },
+        world: "MAIN",
+        func: () => {
+          if (globalThis.game?.ready && typeof game.world?.id === "string")
+            return {
+              adapter: "fvtt",
+              contextId: game.world.id,
+              channel: "main",
+              site: location.origin + location.pathname,
+            };
+          const roots = [...document.querySelectorAll("chat-tab")].filter(
+            (e) => e.getClientRects().length,
+          );
+          if (roots.length !== 1)
+            return {
+              error:
+                "FVTTのワールド、またはユドナリウムの公開チャットを一つ開いてください",
+            };
+          let tab;
+          try {
+            tab = globalThis.ng?.getComponent(roots[0])?.chatTab;
+          } catch {}
+          return {
+            adapter: "udonarium",
+            contextId: "",
+            channel: tab?.identifier ?? "",
+            site: location.origin + location.pathname,
+          };
+        },
+      });
+      const d = result.result;
+      if (!d || d.error) throw new Error(d?.error ?? "VTTを検出できません");
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(d.site),
+      );
+      const instanceId =
+        "vtt-" +
+        [...new Uint8Array(digest)]
+          .slice(0, 12)
+          .map((n) => n.toString(16).padStart(2, "0"))
+          .join("");
+      return {
+        adapter: d.adapter,
+        contextId: d.contextId,
+        channel: d.channel,
+        instanceId,
+      };
+    }
     if (m.type === "connect") {
       if (sender.url !== chrome.runtime.getURL("popup.html"))
         throw new Error("ポップアップから接続してください");

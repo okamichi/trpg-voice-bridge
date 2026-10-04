@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Store, initialConfig } from "./store.mjs";
+import { characterSettings, saveCharacter } from "./character-settings.mjs";
 import { Engine } from "./engine.mjs";
 import {
   check,
@@ -13,6 +14,7 @@ import {
 } from "./contracts.mjs";
 const webRoot = new URL("../web/", import.meta.url);
 const equal = (a, b) => {
+  if (typeof a !== "string" || typeof b !== "string") return false;
   const x = Buffer.from(a ?? ""),
     y = Buffer.from(b ?? "");
   return x.length === y.length && timingSafeEqual(x, y);
@@ -47,6 +49,7 @@ export function createApp({
   publicOrigin = "",
   providerOptions = {},
   initial,
+  loadDefaults,
 } = {}) {
   const store = new Store(dataDir, initial ?? initialConfig(profiles)),
     engine = new Engine(store, providerOptions);
@@ -61,11 +64,27 @@ export function createApp({
     requests = new Map(),
     connections = new Map(),
     disconnects = new Map();
-  let invitationGeneration = 0;
+  let invitationGeneration = 0,
+    currentInvite;
+  const bootAccess = randomBytes(32).toString("hex"),
+    pairings = new Map();
+  const cookie = (req, name) =>
+    (req.headers.cookie ?? "")
+      .split(";")
+      .map((x) => x.trim())
+      .find((x) => x.startsWith(name + "="))
+      ?.slice(name.length + 1);
+
   const authAdmin = (req) =>
-    equal(req.headers.authorization, `Bearer ${store.secrets.admin}`);
-  const authCollector = (req) =>
-    equal(req.headers.authorization, `Bearer ${store.secrets.collector}`);
+    equal(req.headers.authorization, `Bearer ${store.secrets.admin}`) ||
+    equal(cookie(req, "trpg_admin"), store.secrets.admin);
+  const authCollector = (req) => {
+    const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    const saved = store.auth("collector:" + hash(token));
+    return (
+      saved && (!req.headers.origin || req.headers.origin === saved.origin)
+    );
+  };
   function origin(req, admin = false) {
     check(
       !req.headers.origin ||
@@ -98,7 +117,7 @@ export function createApp({
   }
   const admin = (req) => {
     origin(req, true);
-    check(authAdmin(req), "管理トークンが必要です", 401);
+    check(authAdmin(req), "起動時の管理用リンクを開いてください", 401);
   };
   const collector = (req) => {
     check(authCollector(req), "Collectorトークンが必要です", 401);
@@ -122,7 +141,11 @@ export function createApp({
       typeof key === "string" && /^[\w-]{1,120}$/.test(key),
       "Idempotency-Keyが必要です",
     );
-    const k = req.method + req.url + key,
+    const k =
+        hash(req.headers.cookie ?? req.headers.authorization ?? "") +
+        req.method +
+        req.url +
+        key,
       fingerprint = hash(b),
       old = requests.get(k);
     if (old) {
@@ -136,7 +159,7 @@ export function createApp({
     check(requests.size < 2000, "操作履歴が満杯です", 429);
     const entry = { fingerprint, time: Date.now(), bytes: 0 };
     // The same limit covers retained preview responses; reserve before generation.
-    const preview = req.url === "/api/v1/admin/previews";
+    const preview = req.url.endsWith("/previews");
     if (preview) {
       check(
         [...requests.values()].reduce((n, r) => n + (r.bytes ?? 0), 0) +
@@ -163,23 +186,18 @@ export function createApp({
     requests.set(k, entry);
     return promise;
   }
-  function persist(c, revision) {
-    check(
-      c.roomId === store.config.roomId,
-      "卓IDの変更には別データディレクトリを使用してください",
-    );
-    const before = store.config;
-    for (const v of before.voiceProfiles)
-      if (!c.voiceProfiles?.some((x) => x.id === v.id)) {
-        check(
-          !c.characters?.some((x) => x.voiceProfileId === v.id),
-          "使用中の声は削除できません",
-          409,
-        );
-      }
-    const saved = store.save(c, revision);
+  async function voices() {
+    if (store.config.provider.type === "mock")
+      return [{ id: "none", no_ref: true }];
+    const r = await fetch(`${store.config.provider.baseUrl}/v1/audio/voices`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    check(r.ok, "参照voice一覧の取得失敗", 502);
+    const data = await r.json();
+    return (data.data ?? []).map((v) => ({ id: v.id, no_ref: v.no_ref }));
+  }
+  function changed(before) {
     engine.configChanged(before);
-    return saved;
   }
   const server = createServer(async (req, res) => {
     res.setHeader("Cache-Control", "private, no-store");
@@ -200,6 +218,7 @@ export function createApp({
         "/player/": ["player.html", "text/html"],
         "/admin/": ["admin.html", "text/html"],
         "/web/style.css": ["style.css", "text/css"],
+        "/web/characters.js": ["characters.js", "text/javascript"],
         "/web/player.js": ["player.js", "text/javascript"],
         "/web/admin.js": ["admin.js", "text/javascript"],
         "/web/playback.js": ["playback.js", "text/javascript"],
@@ -210,13 +229,106 @@ export function createApp({
         res.writeHead(200, { "Content-Type": `${mime}; charset=utf-8` });
         return res.end(readFileSync(new URL(f, webRoot)));
       }
+      if (path === "/api/v1/admin-login" && method === "POST") {
+        origin(req, true);
+        const b = await body(req);
+        check(
+          equal(b.access, bootAccess),
+          "管理用リンクが無効です。起動ログを確認してください",
+          401,
+        );
+        res.setHeader(
+          "Set-Cookie",
+          `trpg_admin=${store.secrets.admin}; HttpOnly; SameSite=Strict; Path=/`,
+        );
+        return json(res, 200, { ok: true });
+      }
+      if (path === "/api/v1/pairings" && method === "POST") {
+        check(
+          req.headers.host === new URL(localOrigin).host,
+          "ローカル接続が必要です",
+          403,
+        );
+        check(
+          !req.headers.origin ||
+            /^chrome-extension:\/\/[a-z]+$/.test(req.headers.origin),
+          "拡張から接続してください",
+          403,
+        );
+        const b = await body(req);
+        check(
+          typeof b.key === "string" && /^[a-f0-9]{64}$/.test(b.key),
+          "接続キーが不正です",
+        );
+        for (const [k, v] of pairings)
+          if (v.expires < Date.now()) pairings.delete(k);
+        const key = hash(b.key);
+        let pending = pairings.get(key);
+        if (!pending) {
+          check(pairings.size < 20, "接続承認の待機数が上限です", 429);
+          pending = {
+            id: randomUUID(),
+            code: randomBytes(3).toString("hex").toUpperCase(),
+            origin: req.headers.origin ?? "",
+            expires: Date.now() + 300000,
+          };
+          pairings.set(key, pending);
+        }
+        check(
+          pending.origin === (req.headers.origin ?? ""),
+          "異なる拡張です",
+          403,
+        );
+        return json(res, 200, {
+          code: pending.code,
+          status: pending.token
+            ? "approved"
+            : pending.rejected
+              ? "rejected"
+              : "pending",
+          token: pending.token,
+        });
+      }
       if (path.startsWith("/api/v1/admin/")) {
         admin(req);
-        if (path === "/api/v1/admin/config") {
-          if (method === "GET") return json(res, 200, store.config);
-          if (method === "PUT") {
-            const b = await body(req, 1024 * 1024);
-            return json(res, 200, persist(b, b.revision));
+        if (path === "/api/v1/admin/config" && method === "GET")
+          return json(res, 200, store.config);
+        if (path === "/api/v1/admin/provider" && method === "PUT") {
+          const b = await body(req);
+          store.change((c) => {
+            store.compare(c.provider, b.before);
+            c.provider.baseUrl = b.baseUrl;
+          });
+          return json(res, 200, store.config.provider);
+        }
+        if (path === "/api/v1/admin/pairings") {
+          if (method === "GET")
+            return json(
+              res,
+              200,
+              [...pairings.values()]
+                .filter(
+                  (p) => !p.token && !p.rejected && p.expires > Date.now(),
+                )
+                .map(({ id, code }) => ({ id, code })),
+            );
+          if (method === "POST") {
+            const b = await body(req),
+              p = [...pairings.values()].find((p) => p.id === b.id);
+            check(
+              p && p.expires > Date.now() && !p.rejected,
+              "承認待ちの接続がありません",
+              404,
+            );
+            if (b.approve === true) {
+              if (!p.token) {
+                p.token = randomBytes(32).toString("hex");
+                store.setAuth("collector:" + hash(p.token), {
+                  origin: p.origin,
+                });
+              }
+            } else p.rejected = true;
+            return json(res, 200, { ok: true });
           }
         }
         if (path === "/api/v1/admin/diagnostics" && method === "GET") {
@@ -258,99 +370,11 @@ export function createApp({
             })),
           });
         }
-        if (path === "/api/v1/admin/unmapped-speakers" && method === "GET")
-          return json(
-            res,
-            200,
-            [...engine.unmapped].map(([id, u]) => ({ id, ...u })),
-          );
-        if (
-          path.startsWith("/api/v1/admin/unmapped-speakers/") &&
-          method === "DELETE"
-        ) {
-          engine.unmapped.delete(path.split("/").at(-1));
-          return json(res, 200, { ok: true });
-        }
         if (
           path === "/api/v1/admin/providers/irodori-local/voices" &&
           method === "GET"
-        ) {
-          if (store.config.provider.type === "mock")
-            return json(res, 200, [{ id: "none", no_ref: true }]);
-          const r = await fetch(
-            `${store.config.provider.baseUrl}/v1/audio/voices`,
-            { signal: AbortSignal.timeout(5000) },
-          );
-          check(r.ok, "参照voice一覧の取得失敗", 502);
-          const d = await r.json();
-          return json(
-            res,
-            200,
-            (d.data ?? []).map((v) => ({ id: v.id, no_ref: v.no_ref })),
-          );
-        }
-        const entity =
-          /^\/api\/v1\/admin\/(characters|voice-profiles)(?:\/([\w.-]+))?$/.exec(
-            path,
-          );
-        if (entity) {
-          const collection =
-              entity[1] === "characters" ? "characters" : "voiceProfiles",
-            entityId = entity[2],
-            items = store.config[collection];
-          if (method === "GET") {
-            const value = entityId
-              ? items.find((x) => x.id === entityId)
-              : items;
-            check(value, "見つかりません", 404);
-            return json(res, 200, value);
-          }
-          if (["POST", "PATCH", "DELETE"].includes(method)) {
-            const b = await body(req);
-            const result = await idempotent(req, b, () => {
-              const c = structuredClone(store.config);
-              let value;
-              if (method === "POST") {
-                value = { ...b.value, id: randomUUID() };
-                if (collection === "voiceProfiles") value.revision = 1;
-                if (collection === "characters" && b.newVoice) {
-                  const v = { ...b.newVoice, id: randomUUID(), revision: 1 };
-                  c.voiceProfiles.push(v);
-                  value.voiceProfileId = v.id;
-                }
-                c[collection].push(value);
-              } else {
-                const index = c[collection].findIndex((x) => x.id === entityId);
-                check(index >= 0, "見つかりません", 404);
-                if (method === "DELETE") {
-                  if (collection === "voiceProfiles") {
-                    const users = c.characters.filter(
-                      (x) => x.voiceProfileId === entityId,
-                    );
-                    check(
-                      !users.length,
-                      `使用中: ${users.map((x) => x.displayName).join("、")}`,
-                      409,
-                    );
-                  }
-                  c[collection].splice(index, 1);
-                  value = { deleted: entityId };
-                } else {
-                  if (collection === "characters" && b.newVoice) {
-                    const v = { ...b.newVoice, id: randomUUID(), revision: 1 };
-                    c.voiceProfiles.push(v);
-                    b.value = { ...b.value, voiceProfileId: v.id };
-                  }
-                  value = { ...c[collection][index], ...b.value, id: entityId };
-                  c[collection][index] = value;
-                }
-              }
-              persist(c, b.revision);
-              return { value, revision: store.config.revision };
-            });
-            return json(res, 200, result);
-          }
-        }
+        )
+          return json(res, 200, await voices());
         if (path === "/api/v1/admin/previews" && method === "POST") {
           const b = await body(req);
           const wav = await idempotent(req, b, () => {
@@ -378,11 +402,12 @@ export function createApp({
           } else if (b.command === "start") {
             engine.accepting = true;
             engine.pump();
-          } else if (b.command === "stop") engine.accepting = false;
+          } else if (b.command === "stop") engine.reset();
           else if (b.command === "reset") engine.reset();
           else if (b.command === "end") {
             engine.reset(true);
             invites.clear();
+            currentInvite = null;
             players.clear();
             for (const ws of wss.clients) ws.close(1000, "session ended");
           } else if (b.command === "recover-provider") {
@@ -391,19 +416,35 @@ export function createApp({
             engine.pump();
           } else if (b.command === "release-collector")
             engine.collectors.clear();
-          else if (b.command === "invite") {
-            invitationGeneration++;
-            invites.clear();
-            const token = randomBytes(32).toString("hex");
-            invites.set(hash(token), {
-              expires: Date.now() + 3600000,
-              sessionId: engine.sessionId,
-              generation: invitationGeneration,
-            });
-            result = {
-              url: `${publicOrigin || localOrigin}/player/#invite=${token}`,
-              expires: Date.now() + 3600000,
-            };
+          else if (b.command === "reset-settings") {
+            check(b.confirm === true, "初期化の確認が必要です");
+            engine.reset();
+            const before = store.config;
+            store.resetDefaults(loadDefaults?.());
+            changed(before);
+          } else if (b.command === "revoke-collectors") {
+            store.revokeCollectors();
+            engine.collectors.clear();
+            pairings.clear();
+          } else if (b.command === "invite" || b.command === "renew-invite") {
+            if (b.command === "invite" && currentInvite?.expires > Date.now())
+              result = currentInvite;
+            else {
+              invitationGeneration++;
+              invites.clear();
+              const token = randomBytes(32).toString("hex");
+              invites.set(hash(token), {
+                expires: Date.now() + 3600000,
+                sessionId: engine.sessionId,
+                generation: invitationGeneration,
+              });
+              result = {
+                url: `${publicOrigin || localOrigin}/player/#invite=${token}`,
+                localUrl: `${localOrigin}/player/#invite=${token}`,
+                expires: Date.now() + 3600000,
+              };
+              currentInvite = result;
+            }
           } else throw new HttpError(422, "不明なコマンドです");
           commands.set(b.commandId, {
             fingerprint: hash(b),
@@ -462,6 +503,23 @@ export function createApp({
           "不明なCollector APIです",
           404,
         );
+        if (path.endsWith("/heartbeat"))
+          check(
+            engine.collectors.get(sourceKey(b.source))?.collectorId ===
+              b.collectorId,
+            "接続が解除されました。拡張から再接続してください",
+            409,
+          );
+        if (
+          path.endsWith("/connect") &&
+          !store.config.sources.some(
+            (s) => sourceKey(s) === sourceKey(b.source),
+          )
+        )
+          store.change((c) => {
+            const { adapter, instanceId, contextId } = b.source ?? {};
+            c.sources.push({ adapter, instanceId, contextId });
+          });
         return json(res, 200, engine.connect(b));
       }
       if (path === "/api/v1/events" && method === "POST") {
@@ -469,6 +527,37 @@ export function createApp({
         const b = await body(req),
           result = engine.ingress(b, req.headers["x-collector-id"]);
         return json(res, result.http, result);
+      }
+      const settingsRoute =
+        /^\/api\/v1\/rooms\/([\w.-]+)\/(characters(?:\/([\w.-]+))?|voices|previews)$/.exec(
+          path,
+        );
+      if (settingsRoute) {
+        origin(req);
+        player(req);
+        check(settingsRoute[1] === store.config.roomId, "別の卓です", 403);
+        if (method === "GET" && settingsRoute[2] === "characters")
+          return json(res, 200, characterSettings(store));
+        if (method === "GET" && settingsRoute[2] === "voices")
+          return json(res, 200, await voices());
+        if (method === "PATCH" && settingsRoute[3]) {
+          const b = await body(req, 65536);
+          const result = await idempotent(req, b, () => {
+            const previous = store.config;
+            const value = saveCharacter(store, settingsRoute[3], b);
+            changed(previous);
+            return { value };
+          });
+          return json(res, 200, result);
+        }
+        if (method === "POST" && settingsRoute[2] === "previews") {
+          const b = await body(req);
+          const wav = await idempotent(req, b, () => {
+            voiceSchema(b.voice);
+            return engine.preview(b.text, b.voice);
+          });
+          return wave(res, wav);
+        }
       }
       const room =
         /^\/api\/v1\/rooms\/([\w.-]+)\/(state|audio\/([\w-]+))$/.exec(path);
@@ -502,7 +591,6 @@ export function createApp({
             e.status || e.name === "TimeoutError"
               ? e.message
               : "処理に失敗しました",
-          ...(e.status === 409 ? { revision: store.config.revision } : {}),
         });
       } else res.end();
     }
@@ -667,6 +755,7 @@ export function createApp({
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
   return {
+    adminUrl: () => `${localOrigin}/admin/#access=${bootAccess}`,
     server,
     store,
     engine,

@@ -7,12 +7,16 @@ const localOrigin = process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${port}`;
 const dataDir = resolve(
   process.env.TTS_DATA_DIR ?? new URL("./data/", import.meta.url).pathname,
 );
-const profiles = JSON.parse(
-  readFileSync(new URL("./profiles.json", import.meta.url)),
+const configPath = resolve(
+  process.env.TTS_CONFIG_FILE ??
+    new URL("./config.json", import.meta.url).pathname,
 );
+const loadDefaults = () => JSON.parse(readFileSync(configPath));
+const initial = loadDefaults();
 const app = createApp({
   dataDir,
-  profiles,
+  initial,
+  loadDefaults,
   localOrigin,
   publicOrigin: process.env.TTS_PUBLIC_ORIGIN ?? "",
 });
@@ -30,10 +34,7 @@ app.engine.on("notification", (message) => {
   );
 });
 app.server.listen(port, host, () => {
-  console.log(`TRPG Voice Bridge: ${localOrigin}/admin/`);
-  console.log(
-    `認証情報: ${dataDir}/credentials.json （adminを管理画面、collectorを拡張へ入力）`,
-  );
+  console.log(`管理用リンク（共有しないでください）: ${app.adminUrl()}`);
 });
 for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => app.close().then(() => process.exit(0)));

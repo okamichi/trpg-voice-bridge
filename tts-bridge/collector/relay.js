@@ -15,8 +15,13 @@
     )
       return;
     // No secret is ever sent to MAIN world or injected into the VTT DOM.
-    chrome.runtime
-      .sendMessage({ type: d.type, payload: d.payload })
-      .catch(() => {});
+    try {
+      if (chrome.runtime?.id)
+        chrome.runtime
+          .sendMessage({ type: d.type, payload: d.payload })
+          .catch(() => {});
+    } catch {
+      /* Extension was reloaded; this document must reconnect. */
+    }
   });
 })();

@@ -74,7 +74,7 @@
         "FVTT 12/13/14のロード完了したワールドが必要です。その他の版は検証待ちです",
       );
     if (game.world?.id !== settings.contextId)
-      return fail("管理画面と拡張の部屋IDをFVTTのworld.idに合わせてください");
+      return fail("ワールドが変わりました。拡張から再接続してください");
     const ic = globalThis.CONST?.CHAT_MESSAGE_STYLES?.IC;
     if (typeof ic !== "number") return fail("FVTTのIC発言種別を確認できません");
     const hook = Hooks.on("createChatMessage", (m) => {

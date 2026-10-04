@@ -3,128 +3,59 @@
   <meta charset="utf-8" /><meta
     name="viewport"
     content="width=device-width,initial-scale=1"
-  /><title>管理 | TRPG Voice Bridge</title
+  />
+  <title>管理 | TRPG Voice Bridge</title
   ><link rel="stylesheet" href="/web/style.css" />
   <main>
-    <p class="eyebrow">TRPG VOICE BRIDGE / GM</p>
-    <h1>卓の声をつなぐ</h1>
-    <div id="notice" role="status"></div>
-    <section id="login">
-      <h2>管理画面へ接続</h2>
-      <label
-        >管理トークン
-        <input id="token" type="password" autocomplete="off" /></label
-      ><small
-        >起動時に案内されたcredentials.jsonのadminを入力してください。</small
-      ><br /><button id="loginButton">接続</button>
+    <p class="eyebrow">TRPG VOICE BRIDGE</p>
+    <h1>卓の音声を管理</h1>
+    <p id="notice" role="status"></p>
+    <section>
+      <h2>接続状態</h2>
+      <p id="connection">確認しています…</p>
+      <div id="collectors"></div>
+      <p id="participants"></p>
+      <button id="toggle" disabled>読み上げ開始</button>
+      <button id="copyInvite">参加URLをコピー</button>
+      <button id="openPlayer">Playerを開く</button>
+      <p id="invite" class="muted"></p>
+      <p>キャラの声はPlayerで全員が設定できます。</p>
     </section>
-    <div id="workspace" hidden>
+    <section id="pairingSection" hidden>
+      <h2>Collectorの初回接続を承認</h2>
+      <p>拡張機能に表示された確認コードと一致する接続を承認してください。</p>
+      <div id="pairings"></div>
+    </section>
+    <section id="recovery" hidden>
+      <h2>音声生成の確認が必要です</h2>
+      <p id="failure"></p>
+      <button id="recover">Irodori側の処理終了を確認して復帰</button>
+    </section>
+    <details>
+      <summary>詳細設定</summary>
       <section>
-        <div class="row">
-          <h2>セッション</h2>
-          <span id="sessionState" class="badge">停止中</span>
-        </div>
-        <button data-command="start">読み上げ開始</button
-        ><button data-command="stop" class="secondary">読み上げ停止</button
-        ><button data-command="reset" class="danger">全停止・保留を破棄</button
-        ><button data-command="end" class="danger">セッション終了</button
-        ><button data-command="invite" class="secondary">参加URLを発行</button>
-        <p id="invite"></p>
-        <div id="diagnostics"></div>
-        <button id="refresh" class="secondary">接続診断を更新</button
-        ><button data-command="recover-provider" class="secondary">
-          上流の処理終了を確認して復帰
-        </button>
-        <p class="muted">接続状態と未登録の発言者は5秒ごとに自動更新します。</p>
-      </section>
-      <div class="grid">
-        <section>
-          <div class="row">
-            <h2>キャラクター</h2>
-            <button id="newCharacter">キャラ追加</button>
-          </div>
-          <div id="characters"></div>
-        </section>
-        <section>
-          <div class="row">
-            <h2>声のプロファイル</h2>
-            <button id="newVoice">声を追加</button>
-          </div>
-          <div id="voices"></div>
-        </section>
-      </div>
-      <section>
-        <h2>未登録の発言者</h2>
-        <p class="muted">
-          読み上げ開始後に観測した公開発言です。紐付けは次の発言から反映されます。
-        </p>
-        <div id="unmapped"></div>
-      </section>
-      <section>
-        <h2>入力元・Collector</h2>
-        <p class="muted">
-          拡張に同じ入力元ID・部屋IDを設定します。名前で紐付ける場合、改名後は再登録してください。
-        </p>
-        <div id="sources"></div>
-        <form id="sourceForm">
-          <div class="row">
-            <label
-              >ツール<select name="adapter">
-                <option value="fvtt">FVTT</option>
-                <option value="udonarium">ユドナリウム（検証待ち）</option>
-                <option value="ccfolia">ココフォリア（取得停止中）</option>
-              </select></label
-            ><label
-              >入力元ID<input
-                name="instanceId"
-                value="my-vtt"
-                required
-                pattern="[\w.-]+" /></label
-            ><label>部屋・ワールドID<input name="contextId" required /></label>
-          </div>
-          <button>入力元を登録</button
-          ><button
-            type="button"
-            data-command="release-collector"
-            class="secondary"
-          >
-            Collectorの指定を解除
-          </button>
-        </form>
-      </section>
-      <section>
-        <h2>Irodori接続</h2>
+        <h2>Irodori接続先</h2>
         <form id="providerForm">
-          <div class="row">
-            <label>接続先<input name="baseUrl" required /></label
-            ><label
-              >ランタイムの版<input name="runtimeRevision" required /></label
-            ><label
-              >動作<select name="type">
-                <option value="irodori">Irodori</option>
-                <option value="mock">テスト音</option>
-              </select></label
-            >
-          </div>
-          <p class="muted">
-            モデル・量子化・参照内容を変更したら版を上げてください。モデルの選択はIrodori側の設定に従います。
-          </p>
-          <button>接続設定を保存</button
-          ><button type="button" id="refreshVoices" class="secondary">
-            参照voice一覧を更新
-          </button>
+          <label>接続先URL<input id="providerUrl" type="url" required /></label
+          ><button>接続先を保存</button
+          ><button type="button" id="testConnection">接続テスト</button>
         </form>
       </section>
-    </div>
+      <section>
+        <h2>接続・セッション</h2>
+        <button id="renewInvite">参加URLを再発行</button>
+        <button id="releaseCollector">Collectorの接続を解除</button>
+        <button id="revokeCollectors">Collectorの承認を取り消す</button>
+        <button id="endSession" class="danger">セッション終了</button>
+      </section>
+      <section>
+        <h2>初期化</h2>
+        <p>
+          キャラ・声・紐付けをconfigの初期値へ戻します。認証情報と接続設定は残ります。
+        </p>
+        <button id="resetSettings" class="danger">設定を初期値に戻す</button>
+      </section>
+    </details>
   </main>
-  <dialog id="editor">
-    <form id="editForm">
-      <h2 id="editorTitle"></h2>
-      <div id="fields"></div>
-      <div id="preview"></div>
-      <button type="submit">保存</button
-      ><button type="button" id="cancel" class="secondary">閉じる</button>
-    </form>
-  </dialog>
   <script type="module" src="/web/admin.js"></script>
 </html>

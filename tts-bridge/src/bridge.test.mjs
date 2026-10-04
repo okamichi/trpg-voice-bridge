@@ -8,6 +8,7 @@ import { Store, initialConfig } from "./store.mjs";
 import { Engine } from "./engine.mjs";
 import { createApp } from "./http.mjs";
 import { mockWav, inspectWav, payload } from "./provider.mjs";
+import { saveCharacter } from "./character-settings.mjs";
 import { resolveCharacter } from "./contracts.mjs";
 import { Playback } from "../web/playback.js";
 const fixtureSource = {
@@ -87,16 +88,16 @@ test("persistent source-key dedupe ignores eventId and session, rejects content 
     "cancelled",
   );
   assert.ok(
-    !readFileSync(join(dir, "ledger.sqlite")).includes(Buffer.from(e.text)),
+    !readFileSync(join(dir, "bridge.sqlite")).includes(Buffer.from(e.text)),
   );
 });
-test("same text with different message IDs creates two orders sharing audio", async (t) => {
+test("same text with different message IDs generates separate audio for each new message", async (t) => {
   const { engine } = setup(t);
   engine.ingress(event(engine, "a"), "one");
   engine.ingress(event(engine, "b"), "one");
   await idle(engine);
   assert.equal(engine.orders.size, 2);
-  assert.equal(engine.audio.size, 1);
+  assert.equal(engine.audio.size, 2);
   assert.deepEqual(
     [...engine.orders.values()].map((x) => x.status),
     ["ready", "ready"],
@@ -124,17 +125,29 @@ test("reject private, unknown, nonplaintext, oversized and wrong collectors", (t
   );
   assert.equal(engine.orders.size, 0);
 });
-test("unmapped utterance is never replayed by later binding", (t) => {
+test("discovery while stopped, voice assignment and resume never replay old speech", async (t) => {
   const { engine, store } = setup(t);
+  engine.accepting = false;
   const e = event(engine);
   e.speaker.id = "new";
   assert.equal(engine.ingress(e, "one").status, "ignored");
-  const c = structuredClone(store.config);
-  c.characters[0].bindings.push({ ...fixtureSource, speakerId: "new" });
-  store.save(c, c.revision);
+  const ch = store.config.characters.find((c) => c.voiceProfileId === null);
+  assert.ok(ch);
+  assert.equal(ch.bindings[0].speakerId, "new");
+  saveCharacter(store, ch.id, {
+    before: ch,
+    value: { voiceProfileId: "melissa" },
+  });
+  engine.accepting = true;
   assert.equal(engine.ingress(e, "one").status, "ignored");
   assert.equal(engine.orders.size, 0);
-  assert.equal(engine.unmapped.size, 1);
+  assert.equal(
+    engine.ingress({ ...e, source: { ...e.source, messageId: "new" } }, "one")
+      .status,
+    "queued",
+  );
+  await idle(engine);
+  assert.equal(engine.audio.size, 1);
 });
 test("token override beats actor binding and disabled override does not fall back", (t) => {
   const { store } = setup(t),
@@ -151,20 +164,69 @@ test("token override beats actor binding and disabled override does not fall bac
   };
   assert.equal(resolveCharacter(c, e).id, "npc");
 });
-test("config persists, increments voice revisions, detects conflicts and duplicate bindings", (t) => {
-  const { store, dir } = setup(t),
-    c = structuredClone(store.config);
-  c.voiceProfiles[0].caption = "静かな声";
-  const saved = store.save(c, c.revision);
-  assert.equal(saved.voiceProfiles[0].revision, 2);
-  assert.throws(() => store.save(c, c.revision), { status: 409 });
-  assert.equal(
-    JSON.parse(readFileSync(join(dir, "config.json"))).voiceProfiles[0].caption,
-    "静かな声",
+test("SQL persistence, entity conflicts, unrelated edits and atomic rollback", (t) => {
+  const { store, dir } = setup(t);
+  const ch = structuredClone(store.config.characters[0]),
+    voice = structuredClone(store.config.voiceProfiles[0]);
+  store.change((c) => c.characters.push({ ...ch, id: "other", bindings: [] }));
+  const other = structuredClone(store.config.characters[1]);
+  saveCharacter(store, ch.id, {
+    before: ch,
+    value: { displayName: "新しい名前" },
+  });
+  saveCharacter(store, other.id, {
+    before: other,
+    value: { displayName: "別キャラ" },
+  });
+  assert.throws(
+    () =>
+      saveCharacter(store, ch.id, {
+        before: ch,
+        value: { displayName: "古い画面" },
+      }),
+    { status: 409 },
   );
-  const dup = structuredClone(saved);
-  dup.characters.push({ ...dup.characters[0], id: "other" });
-  assert.throws(() => store.save(dup, dup.revision), { status: 409 });
+  const latest = structuredClone(store.config.characters[0]);
+  saveCharacter(store, ch.id, {
+    before: latest,
+    value: {},
+    voiceBefore: voice,
+    voice: { ...voice, caption: "静かな声" },
+  });
+  assert.throws(
+    () =>
+      saveCharacter(store, ch.id, {
+        before: latest,
+        value: {},
+        voiceBefore: voice,
+        voice: { ...voice, caption: "上書き" },
+      }),
+    { status: 409 },
+  );
+  const saved = structuredClone(store.config);
+  assert.throws(
+    () =>
+      saveCharacter(store, ch.id, {
+        before: latest,
+        value: { displayName: "" },
+        voiceBefore: null,
+        voice: { ...voice, name: "新規" },
+      }),
+    { status: 422 },
+  );
+  assert.deepEqual(store.config, saved);
+  assert.throws(
+    () =>
+      store.change((c) =>
+        c.characters.push({ ...c.characters[0], id: "duplicate" }),
+      ),
+    { status: 409 },
+  );
+  const reopened = new Store(dir, config());
+  assert.deepEqual(reopened.config, saved);
+  assert.equal("revision" in reopened.config, false);
+  assert.equal("revision" in reopened.config.voiceProfiles[0], false);
+  reopened.close();
 });
 test("reset discards late synthesis result and cancels queued work", async (t) => {
   let release;
@@ -231,17 +293,20 @@ test("failure lets next order advance; timeout requires explicit recovery", asyn
     status: 503,
   });
 });
-test("profile snapshot, reference revision and runtime revision isolate cache", async (t) => {
+test("accepted speech keeps its voice snapshot; next speech uses saved changes", async (t) => {
   const { engine, store } = setup(t);
   engine.ingress(event(engine, "one"), "one");
-  await idle(engine);
-  const c = structuredClone(store.config);
-  c.voiceProfiles[0].referenceRevision++;
-  store.save(c, c.revision);
+  const before = structuredClone(store.config);
+  const c = structuredClone(before);
+  c.voiceProfiles[0].caption = "新しい声";
+  store.save(c, before);
   engine.ingress(event(engine, "two"), "one");
   await idle(engine);
+  assert.deepEqual(
+    [...engine.orders.values()].map((o) => o.voice.caption),
+    ["明るい声", "新しい声"],
+  );
   assert.equal(engine.audio.size, 2);
-  assert.equal([...engine.orders.values()][0].voice.referenceRevision, 1);
 });
 test("capacity backpressure and strict WAV validation", (t) => {
   const { engine } = setup(t, { maxAudioBytes: 100 });
@@ -341,31 +406,23 @@ test("HTTP roles, invite cookie, room isolation, CRUD and idempotency", async (t
       .status,
     401,
   );
-  const b = {
-    revision: 1,
-    value: {
-      ...a.store.config.characters[0],
-      bindings: [],
-      displayName: "New",
-    },
-  };
-  const h = { "Idempotency-Key": "same" };
-  const c1 = await (
-      await a.call("/api/v1/admin/characters", "POST", b, "admin", h)
-    ).json(),
-    c2 = await (
-      await a.call("/api/v1/admin/characters", "POST", b, "admin", h)
-    ).json();
+  const before = structuredClone(a.store.config.characters[0]);
+  const b = { before, value: { displayName: "New" } };
+  const h = { Cookie: cookie, "Idempotency-Key": "same" };
+  const path = "/api/v1/rooms/campaign-01/characters/" + before.id;
+  const c1 = await (await a.call(path, "PATCH", b, null, h)).json();
+  const c2 = await (await a.call(path, "PATCH", b, null, h)).json();
   assert.equal(c1.value.id, c2.value.id);
-  assert.equal(a.store.config.characters.length, 2);
+  assert.equal(a.store.config.characters[0].displayName, "New");
   assert.equal(
     (
-      await a.call("/api/v1/admin/voice-profiles/melissa", "DELETE", {
-        revision: 2,
+      await a.call(path, "PATCH", { ...b, value: { enabled: false } }, null, {
+        Cookie: cookie,
       })
     ).status,
     409,
   );
+  assert.equal((await a.call(path, "PATCH", b, null)).status, 401);
   await a.call("/api/v1/admin/commands", "POST", {
     command: "end",
     commandId: "end",
@@ -604,7 +661,12 @@ test("malformed config and unsupported voice options are rejected atomically", a
     provider: { ...before.provider, baseUrl: "file:///etc/passwd" },
   };
   assert.equal(
-    (await a.call("/api/v1/admin/config", "PUT", broken)).status,
+    (
+      await a.call("/api/v1/admin/provider", "PUT", {
+        before: before.provider,
+        baseUrl: broken.provider.baseUrl,
+      })
+    ).status,
     422,
   );
   assert.deepEqual(a.store.config, before);
@@ -617,14 +679,175 @@ test("malformed config and unsupported voice options are rejected atomically", a
     ).status,
     422,
   );
+  assert.deepEqual(a.store.config, before);
+});
+
+test("management link, Collector approval persistence, automatic source registration and revocation", async (t) => {
+  const a = await httpApp(t);
+  const access = new URL(a.adminUrl()).hash.slice(8);
+  const login = await a.call("/api/v1/admin-login", "POST", { access }, null, {
+    Origin: a.base,
+  });
+  assert.equal(login.status, 200);
+  const adminCookie = login.headers.get("set-cookie").split(";")[0];
   assert.equal(
     (
-      await a.call("/api/v1/admin/config", "PUT", {
-        revision: before.revision,
-        roomId: before.roomId,
+      await a.call("/api/v1/admin/config", "GET", null, null, {
+        Cookie: adminCookie,
       })
     ).status,
-    422,
+    200,
   );
-  assert.deepEqual(a.store.config, before);
+  assert.equal(
+    (
+      await a.call("/api/v1/admin-login", "POST", { access }, null, {
+        Origin: "https://evil.test",
+      })
+    ).status,
+    403,
+  );
+  const key = "1".repeat(64),
+    extensionOrigin = "chrome-extension://aaaaaaaa";
+  const pending = await (
+    await a.call("/api/v1/pairings", "POST", { key }, null, {
+      Origin: extensionOrigin,
+    })
+  ).json();
+  assert.equal(pending.status, "pending");
+  const list = await (await a.call("/api/v1/admin/pairings")).json();
+  assert.equal(list[0].code, pending.code);
+  await a.call("/api/v1/admin/pairings", "POST", {
+    id: list[0].id,
+    approve: true,
+  });
+  const approved = await (
+    await a.call("/api/v1/pairings", "POST", { key }, null, {
+      Origin: extensionOrigin,
+    })
+  ).json();
+  assert.equal(approved.status, "approved");
+  const headers = {
+    Authorization: `Bearer ${approved.token}`,
+    Origin: extensionOrigin,
+  };
+  const source = {
+      adapter: "fvtt",
+      instanceId: "auto-vtt",
+      contextId: "new-world",
+    },
+    b = { source, collectorId: "extension" };
+  assert.equal(
+    (await a.call("/api/v1/collectors/connect", "POST", b, null, headers))
+      .status,
+    200,
+  );
+  assert.ok(a.store.config.sources.some((s) => s.contextId === "new-world"));
+  const reopened = new Store(a.store.dir, config());
+  assert.equal(
+    reopened.db
+      .prepare("SELECT count(*) AS n FROM auth WHERE key LIKE 'collector:%'")
+      .get().n,
+    1,
+  );
+  reopened.close();
+  await a.call("/api/v1/admin/commands", "POST", {
+    command: "release-collector",
+    commandId: "release",
+  });
+  assert.equal(
+    (await a.call("/api/v1/collectors/heartbeat", "POST", b, null, headers))
+      .status,
+    409,
+  );
+  await a.call("/api/v1/admin/commands", "POST", {
+    command: "revoke-collectors",
+    commandId: "revoke",
+  });
+  assert.equal(
+    (await a.call("/api/v1/collectors/connect", "POST", b, null, headers))
+      .status,
+    401,
+  );
+});
+
+test("reuses valid invitation, explicit renewal, reset keeps auth/provider/sources and stops playback", async (t) => {
+  const a = await httpApp(t);
+  const cmd = async (command, extra = {}) =>
+    (
+      await a.call("/api/v1/admin/commands", "POST", {
+        command,
+        commandId: randomId(),
+        ...extra,
+      })
+    ).json();
+  const invite = await cmd("invite");
+  assert.equal((await cmd("invite")).url, invite.url);
+  assert.notEqual((await cmd("renew-invite")).url, invite.url);
+  a.store.change((c) => {
+    c.provider.baseUrl = "http://127.0.0.1:9999";
+    c.characters[0].displayName = "changed";
+  });
+  const secrets = structuredClone(a.store.secrets),
+    sources = structuredClone(a.store.config.sources);
+  a.engine.accepting = true;
+  await cmd("reset-settings", { confirm: true });
+  assert.equal(a.engine.accepting, false);
+  assert.equal(a.store.config.characters[0].displayName, "メリッサ");
+  assert.equal(a.store.config.provider.baseUrl, "http://127.0.0.1:9999");
+  assert.deepEqual(a.store.secrets, secrets);
+  assert.deepEqual(a.store.config.sources, sources);
+  await cmd("start");
+  await cmd("stop");
+  assert.equal(a.engine.accepting, false);
+});
+
+test("reset validates new config defaults atomically and preserves connection settings", (t) => {
+  const { store } = setup(t);
+  const before = structuredClone(store.config);
+  const bad = structuredClone(before);
+  bad.characters[0].voiceProfileId = "missing";
+  assert.throws(() => store.resetDefaults(bad), { status: 422 });
+  assert.deepEqual(store.read(), before);
+  const defaults = structuredClone(before);
+  defaults.provider.baseUrl = "http://127.0.0.1:9998";
+  defaults.characters[0].displayName = "初期キャラ";
+  store.resetDefaults(defaults);
+  assert.equal(store.config.characters[0].displayName, "初期キャラ");
+  assert.deepEqual(store.config.provider, before.provider);
+});
+
+test("shared voice update affects all linked characters and new voice assignment is atomic", (t) => {
+  const { store } = setup(t);
+  const first = structuredClone(store.config.characters[0]);
+  store.change((c) =>
+    c.characters.push({ ...first, id: "second", bindings: [] }),
+  );
+  const voice = structuredClone(store.config.voiceProfiles[0]);
+  saveCharacter(store, first.id, {
+    before: first,
+    value: {},
+    voiceBefore: voice,
+    voice: { ...voice, caption: "共有の変更" },
+  });
+  assert.equal(store.config.voiceProfiles.length, 1);
+  assert.deepEqual(
+    store.config.characters.map(
+      (c) =>
+        store.config.voiceProfiles.find((v) => v.id === c.voiceProfileId)
+          .caption,
+    ),
+    ["共有の変更", "共有の変更"],
+  );
+  saveCharacter(store, first.id, {
+    before: first,
+    value: {},
+    voiceBefore: null,
+    voice: { ...voice, name: "新しい声" },
+  });
+  assert.equal(store.config.voiceProfiles.length, 2);
+  assert.notEqual(
+    store.config.characters[0].voiceProfileId,
+    store.config.characters[1].voiceProfileId,
+  );
+  assert.deepEqual(store.config.characters[0].bindings, first.bindings);
 });
