@@ -851,3 +851,73 @@ test("shared voice update affects all linked characters and new voice assignment
   );
   assert.deepEqual(store.config.characters[0].bindings, first.bindings);
 });
+
+test("player registers only a bridge-generated preview as a new reference voice", async (t) => {
+  const a = await httpApp(t);
+  const r = await a.call("/api/v1/admin/commands", "POST", {
+    command: "invite",
+    commandId: "invite-ref",
+  });
+  const invite = new URL((await r.json()).url).hash.slice(8);
+  const join = await a.call("/api/v1/join", "POST", { invite }, null);
+  const Cookie = join.headers.get("set-cookie").split(";")[0];
+  const uploads = [];
+  a.store.config.provider.type = "irodori";
+  a.engine.options.fetchImpl = async (url, init = {}) => {
+    if (url.endsWith("/v1/audio/speech")) return new Response(mockWav());
+    if (init.method === "POST") {
+      uploads.push(init.body);
+      return Response.json({ id: init.body.get("voice_id") }, { status: 201 });
+    }
+    return Response.json({
+      data: [{ id: "none", no_ref: true }, { id: "taken" }],
+    });
+  };
+  const room = "/api/v1/rooms/campaign-01";
+  const preview = await a.call(
+    room + "/previews",
+    "POST",
+    { text: "試聴", voice: a.store.config.voiceProfiles[0] },
+    null,
+    { Cookie },
+  );
+  assert.equal(preview.status, 200);
+  const wav = Buffer.from(await preview.arrayBuffer()),
+    previewId = preview.headers.get("x-preview-id");
+  assert.ok(previewId);
+  const register = (b) => a.call(room + "/voices", "POST", b, null, { Cookie });
+  assert.equal((await register({ previewId, voiceId: "None" })).status, 422);
+  assert.equal((await register({ previewId, voiceId: "../x" })).status, 422);
+  assert.equal((await register({ previewId, voiceId: "taken" })).status, 409);
+  assert.equal(
+    (await register({ previewId: "unknown", voiceId: "fresh" })).status,
+    404,
+  );
+  assert.equal(
+    (
+      await a.call(
+        room + "/voices",
+        "POST",
+        { previewId, voiceId: "fresh" },
+        null,
+      )
+    ).status,
+    401,
+  );
+  assert.equal(uploads.length, 0);
+  const ok = await register({ previewId, voiceId: "fresh" });
+  assert.equal(ok.status, 201);
+  assert.deepEqual(await ok.json(), { id: "fresh" });
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].get("voice_id"), "fresh");
+  assert.equal(uploads[0].get("file").name, "fresh.wav");
+  assert.deepEqual(
+    Buffer.from(await uploads[0].get("file").arrayBuffer()),
+    wav,
+  );
+  a.engine.options.fetchImpl = async (url, init = {}) =>
+    init.method === "POST"
+      ? new Response("exists", { status: 409 })
+      : Response.json({ data: [] });
+  assert.equal((await register({ previewId, voiceId: "race" })).status, 409);
+});

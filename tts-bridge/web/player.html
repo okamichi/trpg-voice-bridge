@@ -109,6 +109,17 @@
       /></label>
       <button type="button" id="previewVoice">自分だけで試聴</button>
       <audio id="previewAudio" controls></audio>
+      <div id="referenceRegister" hidden>
+        <label
+          >参照音声ID（英数字・_・-）<input
+            name="referenceId"
+            maxlength="64"
+            autocomplete="off"
+        /></label>
+        <button type="button" id="registerReference" class="secondary">
+          この試聴音声を参照音声に登録
+        </button>
+      </div>
       <p id="editorStatus" role="status"></p>
       <button id="saveCharacter">保存</button
       ><button type="button" id="cancelCharacter" class="secondary">

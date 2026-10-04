@@ -4,6 +4,7 @@ let room,
   before,
   voiceBefore,
   previewUrl,
+  previewId,
   generation = 0;
 const dialog = $("characterEditor"),
   form = $("characterForm");
@@ -117,15 +118,18 @@ async function edit(ch) {
   dialog.showModal();
   const current = generation;
   try {
-    const voices = await (await request("voices")).json();
-    if (current !== generation) return;
-    $("referenceVoices").replaceChildren(
-      ...voices.map((v) => new Option(v.id, v.id)),
-    );
+    await refreshReferenceVoices(current);
   } catch (e) {
     $("editorStatus").textContent =
       `参照音声一覧を取得できません。既存の設定は利用できます。${e.message}`;
   }
+}
+async function refreshReferenceVoices(current) {
+  const voices = await (await request("voices")).json();
+  if (current !== generation) return;
+  $("referenceVoices").replaceChildren(
+    ...voices.map((v) => new Option(v.id, v.id)),
+  );
 }
 function voiceValue() {
   const v = { id: voiceBefore?.id ?? "new", provider: "irodori-local" };
@@ -190,13 +194,44 @@ $("previewVoice").onclick = async () => {
     if (current !== generation || !dialog.open) return;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = URL.createObjectURL(blob);
+    previewId = response.headers.get("X-Preview-Id");
+    $("referenceRegister").hidden = !previewId;
+    if (!form.elements.referenceId.value) {
+      const d = new Date(),
+        p = (n) => String(n).padStart(2, "0");
+      form.elements.referenceId.value = `voice-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+    }
     $("previewAudio").src = previewUrl;
-    await $("previewAudio").play();
     $("editorStatus").textContent = "この試聴はあなたにだけ再生されます。";
+    await $("previewAudio").play();
   } catch (e) {
     if (current === generation) $("editorStatus").textContent = e.message;
   } finally {
     $("previewVoice").disabled = false;
+  }
+};
+$("registerReference").onclick = async () => {
+  const current = generation,
+    voiceId = form.elements.referenceId.value.trim();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(voiceId)) {
+    $("editorStatus").textContent =
+      "参照音声IDは英数字・_・-の64文字以内で入力してください。";
+    return;
+  }
+  $("registerReference").disabled = true;
+  $("editorStatus").textContent = "参照音声を登録しています…";
+  try {
+    await request("voices", "POST", { previewId, voiceId });
+    if (current !== generation) return;
+    await refreshReferenceVoices(current);
+    form.elements.voiceId.value = voiceId;
+    $("referenceRegister").hidden = true;
+    $("editorStatus").textContent =
+      `参照音声「${voiceId}」を登録しました。保存すると、この声に使われます。`;
+  } catch (e) {
+    if (current === generation) $("editorStatus").textContent = e.message;
+  } finally {
+    $("registerReference").disabled = false;
   }
 };
 $("cancelCharacter").onclick = () => dialog.close();
@@ -206,6 +241,9 @@ dialog.onclose = () => {
   $("previewAudio").removeAttribute("src");
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
+  previewId = null;
+  $("referenceRegister").hidden = true;
+  form.elements.referenceId.value = "";
 };
 setInterval(() => {
   if (room && document.visibilityState === "visible") refreshCharacters();

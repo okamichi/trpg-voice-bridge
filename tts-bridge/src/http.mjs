@@ -63,7 +63,8 @@ export function createApp({
     commands = new Map(),
     requests = new Map(),
     connections = new Map(),
-    disconnects = new Map();
+    disconnects = new Map(),
+    previews = new Map();
   let invitationGeneration = 0,
     currentInvite;
   const bootAccess = randomBytes(32).toString("hex"),
@@ -174,7 +175,8 @@ export function createApp({
       .then(fn)
       .then(
         (value) => {
-          entry.bytes = Buffer.isBuffer(value) ? value.length : 0;
+          const wav = value?.wav ?? value;
+          entry.bytes = Buffer.isBuffer(wav) ? wav.length : 0;
           return value;
         },
         (error) => {
@@ -186,15 +188,59 @@ export function createApp({
     requests.set(k, entry);
     return promise;
   }
+  const upstream = (...a) => (engine.options.fetchImpl ?? fetch)(...a);
   async function voices() {
     if (store.config.provider.type === "mock")
       return [{ id: "none", no_ref: true }];
-    const r = await fetch(`${store.config.provider.baseUrl}/v1/audio/voices`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const r = await upstream(
+      `${store.config.provider.baseUrl}/v1/audio/voices`,
+      {
+        signal: AbortSignal.timeout(5000),
+      },
+    );
     check(r.ok, "参照voice一覧の取得失敗", 502);
     const data = await r.json();
     return (data.data ?? []).map((v) => ({ id: v.id, no_ref: v.no_ref }));
+  }
+  // Only previews this bridge generated can become reference voices, and
+  // existing voice ids are never replaced.
+  async function registerVoice(b) {
+    check(
+      store.config.provider.type !== "mock",
+      "モックでは参照音声を登録できません",
+      409,
+    );
+    check(
+      typeof b.voiceId === "string" &&
+        /^[A-Za-z0-9_-]{1,64}$/.test(b.voiceId) &&
+        !["none", "no_ref", "no-ref", "null", "text-only"].includes(
+          b.voiceId.toLowerCase(),
+        ),
+      "参照音声IDは英数字・_・-の64文字以内です（noneなどは使えません）",
+    );
+    const preview = previews.get(b.previewId);
+    check(
+      preview,
+      "試聴音声の保管期限が切れました。もう一度試聴してください",
+      404,
+    );
+    const taken = "同じIDの参照音声が既にあります。別のIDにしてください";
+    check(!(await voices()).some((v) => v.id === b.voiceId), taken, 409);
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([preview.wav], { type: "audio/wav" }),
+      `${b.voiceId}.wav`,
+    );
+    form.append("voice_id", b.voiceId);
+    const r = await upstream(
+      `${store.config.provider.baseUrl}/v1/audio/voices`,
+      { method: "POST", body: form, signal: AbortSignal.timeout(30000) },
+    );
+    await r.body?.cancel();
+    check(r.status !== 409, taken, 409);
+    check(r.ok, `参照音声の登録に失敗しました（TTS HTTP ${r.status}）`, 502);
+    return { id: b.voiceId };
   }
   function changed(before) {
     engine.configChanged(before);
@@ -550,13 +596,25 @@ export function createApp({
           });
           return json(res, 200, result);
         }
+        if (method === "POST" && settingsRoute[2] === "voices") {
+          const b = await body(req);
+          return json(
+            res,
+            201,
+            await idempotent(req, b, () => registerVoice(b)),
+          );
+        }
         if (method === "POST" && settingsRoute[2] === "previews") {
           const b = await body(req);
-          const wav = await idempotent(req, b, () => {
+          const preview = await idempotent(req, b, async () => {
             voiceSchema(b.voice);
-            return engine.preview(b.text, b.voice);
+            const wav = await engine.preview(b.text, b.voice),
+              id = randomUUID();
+            previews.set(id, { wav, time: Date.now() });
+            return { wav, id };
           });
-          return wave(res, wav);
+          res.setHeader("X-Preview-Id", preview.id);
+          return wave(res, preview.wav);
         }
       }
       const room =
@@ -748,7 +806,7 @@ export function createApp({
     for (const [k, p] of players) if (p.expires < now) players.delete(k);
     for (const [k, t] of disconnects)
       if (now - t > 10000) disconnects.delete(k);
-    for (const map of [requests, commands])
+    for (const map of [requests, commands, previews])
       for (const [k, v] of map) if (now - v.time > 600000) map.delete(k);
   }, 20000);
   heartbeat.unref();
