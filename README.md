@@ -14,6 +14,28 @@ FVTTやユドナリウムなどのVTTから音声担当者（GMまたはPL）の
   - [起動・設定の詳細](tts-bridge/README.md)
   - [HTTPS公開設定例](docs/online.md)
 
+## スクリーンショット
+
+### /player 卓音声再生・キャラ声紐付けページ
+
+参加者が音声を聞き、キャラの声を設定する画面です。
+
+![Player画面](./trpg-voice-bridge-player.png)
+
+### /admin 管理ページ
+
+接続状態の確認、読み上げの開始・停止、参加URLの発行などを行います。
+
+![管理画面](./trpg-voice-bridge-admin.png)
+
+### ブラウザ拡張（Collector）
+
+音声担当者のChromeに読み込んだCollector拡張と、VTTのサイトへのアクセスが許可されている状態です。
+
+![Chromeの拡張機能ページに読み込んだCollector](./trpg-voice-bridge-extension.png)
+
+![VTTのサイトでアクセスが許可されたCollector](./trpg-voice-bridge-collector.png)
+
 ## ライセンス
 
 MITライセンスです。全文は[LICENSE](LICENSE)を参照してください。
