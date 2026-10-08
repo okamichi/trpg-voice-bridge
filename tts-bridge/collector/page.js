@@ -6,6 +6,10 @@
     seen = new Set();
   const connectedAt = Date.now(),
     settings = globalThis.__trpgCollectorSettings;
+  let finish;
+  globalThis.__trpgCollectorReady = new Promise((resolve) => {
+    finish = resolve;
+  });
   const emit = (type, payload) =>
     window.postMessage(
       { channel: "trpg-voice-collector-v1", type, payload },
@@ -16,10 +20,16 @@
     stopped = true;
     cleanup();
     emit("diagnostic", reason);
+    finish({ error: reason });
+  };
+  const ready = (reason) => {
+    emit("diagnostic", reason);
+    finish({ ok: true });
   };
   globalThis.__trpgCollectorStop = () => {
     stopped = true;
     cleanup();
+    finish({ error: "取得を停止しました" });
   };
   function send(data) {
     if (stopped || seen.has(data.messageId)) return;
@@ -118,10 +128,139 @@
       });
     });
     cleanup = () => Hooks.off("createChatMessage", hook);
-    emit(
-      "diagnostic",
+    ready(
       `FVTT ${game.version} / system ${game.system?.id} ${game.system?.version} / adapter 0.1 / 新規IC公開発言のみ`,
     );
+  } else if (settings.adapter === "udonarium" && settings.variant === "fly") {
+    cleanup = () => globalThis.__trpgFly?.cancel();
+    (async () => {
+      try {
+        const { tab, get } = await globalThis.__trpgFly.capture(
+          settings.channel,
+        );
+        if (stopped) return;
+        const tabId = tab.identifier;
+        const publicTab = () =>
+          tab.aliasName === "chat-tab" &&
+          get(tabId) === tab &&
+          tab.plCanView !== false &&
+          tab.guestCanView !== false &&
+          tab.isSystemTab !== true;
+        if (!publicTab()) return fail("Flyの対象チャットが公開ではありません");
+        const start = Date.now();
+        for (const m of tab.chatMessages) {
+          if (typeof m.identifier !== "string")
+            return fail("Flyの発言IDを確認できません");
+          seen.add(m.identifier);
+        }
+        const receive = (m) => {
+          if (stopped) return;
+          try {
+            if (!publicTab())
+              return fail(
+                "Flyの対象チャットが変更されました。再接続してください",
+              );
+            if (
+              m.aliasName !== "chat" ||
+              typeof m.identifier !== "string" ||
+              !Number.isFinite(m.timestamp)
+            )
+              return fail("Flyの発言IDまたは時刻を確認できません");
+            if (seen.has(m.identifier)) return;
+            if (m.tabIdentifier !== tabId)
+              return fail("Flyの対象チャットを確認できません");
+            if (
+              ![
+                m.isDirect,
+                m.isSecret,
+                m.isSystem,
+                m.isDicebot,
+                m.isOperationLog,
+              ].every((v) => typeof v === "boolean") ||
+              !Array.isArray(m.sendTo)
+            )
+              return fail("Flyの発言の公開範囲を確認できません");
+            // Remember excluded IDs before inspecting any speech text. Revealing
+            // a secret later must not turn it into a new public event.
+            if (seen.size >= 20000)
+              return fail("発言数の上限に達しました。再接続してください");
+            if (
+              m.timestamp < start ||
+              m.isDirect ||
+              m.isSecret ||
+              m.isSystem ||
+              m.isDicebot ||
+              m.isOperationLog ||
+              m.sendTo.length
+            ) {
+              seen.add(m.identifier);
+              return;
+            }
+            if (!m.characterIdentifier) {
+              seen.add(m.identifier);
+              return;
+            }
+            const sender = get(m.characterIdentifier);
+            if (sender?.aliasName !== "character") {
+              seen.add(m.identifier);
+              return;
+            }
+            if (typeof m.text !== "string" || typeof m.name !== "string")
+              return fail("Flyの本文または話者を確認できません");
+            if (!m.text.trim() || [...m.text].length > 500) {
+              seen.add(m.identifier);
+              return;
+            }
+            send({
+              messageId: m.identifier,
+              contextId: settings.contextId,
+              speaker: {
+                kind: "character",
+                id: m.characterIdentifier,
+                name: m.name,
+              },
+              text: m.text,
+              occurredAt: new Date(m.timestamp).toISOString(),
+              channel: "main",
+            });
+          } catch {
+            fail("Flyの発言形式が変わりました。取得を停止しました");
+          }
+        };
+        // Observe the model's arrival callback synchronously, so a private
+        // message cannot slip through if it is disclosed between polling ticks.
+        const own = Object.getOwnPropertyDescriptor(tab, "onChildAdded"),
+          original = tab.onChildAdded;
+        if (typeof original !== "function")
+          return fail("Flyの新着発言を確認できません");
+        function onAdded(child) {
+          const result = original.apply(this, arguments);
+          if (this === tab && child?.aliasName === "chat") receive(child);
+          return result;
+        }
+        Object.defineProperty(tab, "onChildAdded", {
+          value: onAdded,
+          configurable: true,
+          writable: true,
+        });
+        const timer = setInterval(() => {
+          if (!publicTab() || tab.onChildAdded !== onAdded)
+            return fail(
+              "Flyの対象チャットが変更されました。再接続してください",
+            );
+        }, 1000);
+        cleanup = () => {
+          clearInterval(timer);
+          if (tab.onChildAdded === onAdded) {
+            if (own) Object.defineProperty(tab, "onChildAdded", own);
+            else delete tab.onChildAdded;
+          }
+        };
+        ready(`Fly / ${tab.name} (${tabId}) / 新規公開キャラ発言のみ`);
+      } catch (e) {
+        fail(e.message);
+      }
+    })();
   } else if (settings.adapter === "udonarium") {
     // The official DOM has only minute-resolution timestamps and virtualized rows.
     // Never invent stable IDs from text. A readable Angular component is required.
@@ -230,8 +369,7 @@
       observer.disconnect();
       clearInterval(timer);
     };
-    emit(
-      "diagnostic",
+    ready(
       "ユドナリウム実験用 / 全員公開タブの新規キャラ発言のみ / キャラIDを使用。公開ビルド未検証",
     );
   } else if (settings.adapter === "ccfolia") {

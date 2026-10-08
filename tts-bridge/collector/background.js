@@ -38,7 +38,7 @@ function source() {
 }
 async function heartbeat() {
   await restore();
-  if (!active) return;
+  if (!active || active.initializing) return;
   const state = await request("/api/v1/collectors/heartbeat", {
     source: source(),
     collectorId: active.collectorId,
@@ -91,7 +91,12 @@ async function connect(settings, tabId) {
       "Bridge URLは http://127.0.0.1:ポート の形式にしてください",
     );
   settings.bridge = url.origin;
-  active = { settings, tabId, collectorId: crypto.randomUUID() };
+  active = {
+    settings,
+    tabId,
+    collectorId: crypto.randomUUID(),
+    initializing: true,
+  };
   const state = await request("/api/v1/collectors/connect", {
     source: source(),
     collectorId: active.collectorId,
@@ -117,6 +122,7 @@ async function connect(settings, tabId) {
     args: [
       {
         adapter: settings.adapter,
+        variant: settings.variant,
         contextId: settings.contextId,
         channel: settings.channel,
       },
@@ -124,9 +130,25 @@ async function connect(settings, tabId) {
   });
   await chrome.scripting.executeScript({
     target: { tabId },
+    files: ["fly.js"],
+    world: "MAIN",
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
     files: ["page.js"],
     world: "MAIN",
   });
+  const [initialized] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => globalThis.__trpgCollectorReady,
+  });
+  if (!initialized.result?.ok) {
+    await stop();
+    throw new Error(initialized.result?.error ?? "取得処理を開始できません");
+  }
+  active.initializing = false;
+  await heartbeat();
   await chrome.alarms.create("trpg-heartbeat", { periodInMinutes: 0.5 });
 }
 async function flush() {
@@ -162,17 +184,52 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
     if (m.type === "detect") {
       if (sender.url !== chrome.runtime.getURL("popup.html"))
         throw new Error("ポップアップから操作してください");
+      if (!["auto", "fvtt", "udonarium", "fly"].includes(m.mode ?? "auto"))
+        throw new Error("取得方式が不正です");
+      await chrome.scripting.executeScript({
+        target: { tabId: m.tabId },
+        files: ["fly.js"],
+        world: "MAIN",
+      });
       const [result] = await chrome.scripting.executeScript({
         target: { tabId: m.tabId },
         world: "MAIN",
-        func: () => {
-          if (globalThis.game?.ready && typeof game.world?.id === "string")
+        args: [m.mode ?? "auto"],
+        func: async (mode) => {
+          if (
+            (mode === "auto" || mode === "fvtt") &&
+            globalThis.game?.ready &&
+            typeof game.world?.id === "string"
+          )
             return {
               adapter: "fvtt",
               contextId: game.world.id,
               channel: "main",
               site: location.origin + location.pathname,
             };
+          if (mode === "fvtt")
+            return { error: "FVTTのワールドを開いてください" };
+          if (
+            mode === "fly" ||
+            (mode === "auto" && /^Udonarium with Fly\b/i.test(document.title))
+          ) {
+            try {
+              const { tab, list } = await globalThis.__trpgFly.capture();
+              return {
+                adapter: "udonarium",
+                variant: "fly",
+                contextId: "",
+                channel: tab.identifier,
+                channels: list.chatTabs.map((t) => ({
+                  id: t.identifier,
+                  name: t.name,
+                })),
+                site: location.origin + location.pathname,
+              };
+            } catch (e) {
+              return { error: e.message };
+            }
+          }
           const roots = [...document.querySelectorAll("chat-tab")].filter(
             (e) => e.getClientRects().length,
           );
@@ -207,8 +264,10 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
           .join("");
       return {
         adapter: d.adapter,
+        variant: d.variant,
         contextId: d.contextId,
         channel: d.channel,
+        channels: d.channels,
         instanceId,
       };
     }
@@ -228,10 +287,15 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
     if (!active || sender.tab?.id !== active.tabId || sender.frameId !== 0)
       return {};
     if (m.type === "diagnostic") {
-      active.diagnostic = String(m.payload).slice(0, 300);
-      await status(active.diagnostic);
-      await chrome.storage.session.set({ active });
-      await heartbeat();
+      const connection = active;
+      connection.diagnostic = String(m.payload).slice(0, 300);
+      await status(connection.diagnostic);
+      if (active !== connection) return {};
+      await chrome.storage.session.set({ active: connection });
+      // Initialization failures are followed by disconnect. A heartbeat here
+      // could race that disconnect and replace the useful adapter error with
+      // a generic lease error in the popup.
+      if (active === connection && !connection.initializing) await heartbeat();
     }
     if (m.type === "event") {
       const p = m.payload;

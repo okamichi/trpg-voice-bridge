@@ -81,7 +81,12 @@ export class Engine extends EventEmitter {
       accepting: this.accepting,
       orders: [...this.orders.values()]
         .filter((o) => o.epoch === this.playbackEpoch)
-        .map((o) => this.publicOrder(o)),
+        .map((o) => ({
+          ...this.publicOrder(o),
+          ...(this.config.publishTextToPlayers && o.status === "ready" && o.text
+            ? { text: o.text }
+            : {}),
+        })),
     };
   }
   publicOrder(o) {
@@ -376,7 +381,8 @@ export class Engine extends EventEmitter {
         ...this.publicOrder(o),
         ...(this.config.publishTextToPlayers ? { text: o.text } : {}),
       });
-      delete o.text;
+      // Text stays in memory with the order until prune() so a reloaded
+      // Player can rebuild its log; it is never written to SQLite.
     } catch (e) {
       const timeout = e.name === "TimeoutError";
       this.lastError = timeout

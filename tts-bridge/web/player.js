@@ -14,7 +14,8 @@ let socket,
   ended = false,
   connecting = false,
   retry = 1000;
-const muted = new Set();
+const muted = new Set(),
+  log = new Map();
 const channel = globalThis.BroadcastChannel
   ? new BroadcastChannel("trpg-voice-player")
   : null;
@@ -34,6 +35,13 @@ const playback = new Playback({
         const r = await fetch(item.audio.url, {
           signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
         });
+        if (r.status === 404) {
+          const entry = log.get(item.orderId);
+          if (entry) entry.unavailable = true;
+          renderLog();
+          last = new Error("この音声は保存期間が過ぎたため、再生できません");
+          break;
+        }
         if (!r.ok) throw new Error("音声を取得できません");
         if (Number(r.headers.get("content-length")) > 25 * 1024 * 1024)
           throw new Error("音声が大きすぎます");
@@ -93,6 +101,89 @@ const playback = new Playback({
   },
 });
 playback.muted = muted;
+function replayable(entry) {
+  return (
+    !ended &&
+    !entry.unavailable &&
+    entry.item.sessionId === meta?.sessionId &&
+    entry.item.playbackEpoch === meta?.playbackEpoch &&
+    entry.item.retainUntil > Date.now() + offset
+  );
+}
+// The log shows only audio that has been generated; replay is local to this page.
+function addLog(item) {
+  if (item.type !== "audio.ready" || !item.audio || log.has(item.orderId))
+    return;
+  const row = document.createElement("li"),
+    info = document.createElement("div"),
+    name = document.createElement("strong"),
+    button = document.createElement("button"),
+    entry = { item, row, button, unavailable: false };
+  row.className = "list-item";
+  info.className = "log-meta";
+  name.textContent = item.speakerName;
+  info.append(
+    new Date(item.readyAt - offset).toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    " ",
+    name,
+  );
+  row.append(info);
+  if (item.text) {
+    const text = document.createElement("p");
+    text.className = "log-text";
+    text.textContent = item.text;
+    row.append(text);
+  }
+  button.type = "button";
+  button.className = "secondary";
+  button.onclick = () => {
+    if (!replayable(entry)) {
+      renderLog();
+      status("この音声は保存期間が過ぎたため、再生できません");
+      return;
+    }
+    if (!playback.enabled) {
+      $("enable").hidden = false;
+      status("先に「音声を有効にする」を押してください");
+      return;
+    }
+    const waiting = !!playback.current;
+    if (playback.replay(item))
+      status(
+        waiting ? "今のセリフの後にもう一度再生します" : "もう一度再生します",
+      );
+  };
+  row.append(button);
+  log.set(item.orderId, entry);
+}
+function renderLog() {
+  const entries = [...log.values()].sort(
+    (a, b) => b.item.orderSeq - a.item.orderSeq,
+  );
+  for (const old of entries.splice(200)) log.delete(old.item.orderId);
+  for (const entry of entries) {
+    const ok = replayable(entry);
+    entry.button.disabled = !ok;
+    entry.button.textContent = ok ? "もう一度再生" : "再生できません";
+  }
+  $("log").replaceChildren(...entries.map((e) => e.row));
+}
+function restoreLog(snapshot) {
+  for (const order of snapshot.orders ?? [])
+    if (order.status === "ready")
+      addLog({
+        ...order,
+        type: "audio.ready",
+        bootId: snapshot.bootId,
+        sessionId: snapshot.sessionId,
+        roomId: snapshot.roomId,
+        playbackEpoch: snapshot.playbackEpoch,
+      });
+  renderLog();
+}
 function addCharacter(n) {
   if (!n.characterId || document.getElementById(`mute-${n.characterId}`))
     return;
@@ -114,7 +205,9 @@ function fresh(n) {
 async function latest() {
   const r = await fetch(`/api/v1/rooms/${meta?.roomId ?? "campaign-01"}/state`);
   if (!r.ok) throw new Error("参加リンクを開き直してください");
-  fresh(await r.json());
+  const snapshot = await r.json();
+  fresh(snapshot);
+  restoreLog(snapshot);
   status("最新の発言から再生します");
 }
 function connect() {
@@ -155,16 +248,21 @@ function connect() {
       );
       return;
     }
-    if (n.type === "state.snapshot") return;
+    if (n.type === "state.snapshot") {
+      restoreLog(n);
+      return;
+    }
     if (n.type === "session.ended") {
       ended = true;
       playback.reset(n, n.baseline);
+      renderLog();
       status("セッションは終了しました");
       socket.close();
       return;
     }
     if (n.type === "playback.reset") {
       fresh(n);
+      renderLog();
       status("読み上げが停止されました");
       return;
     }
@@ -179,6 +277,10 @@ function connect() {
       return;
     }
     addCharacter(n);
+    if (n.type === "order.skipped" && log.has(n.orderId))
+      log.get(n.orderId).unavailable = true;
+    addLog(n);
+    renderLog();
     playback.accept(n);
   };
   socket.onclose = async () => {
@@ -252,6 +354,7 @@ $("volume").oninput = () => {
   if (gain) gain.gain.value = Number($("volume").value);
 };
 $("latest").onclick = () => latest().catch((e) => status(e.message));
+setInterval(renderLog, 30000);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && context?.state !== "running")
     $("enable").hidden = false;

@@ -1,7 +1,7 @@
 (() => {
-  if (globalThis.__trpgRelay) return;
+  globalThis.__trpgRelayStop?.();
   globalThis.__trpgRelay = true;
-  window.addEventListener("message", (e) => {
+  const relay = (e) => {
     if (
       e.source !== window ||
       e.origin !== location.origin ||
@@ -23,5 +23,8 @@
     } catch {
       /* Extension was reloaded; this document must reconnect. */
     }
-  });
+  };
+  window.addEventListener("message", relay);
+  globalThis.__trpgRelayStop = () =>
+    window.removeEventListener("message", relay);
 })();

@@ -5,6 +5,9 @@ body {
   color: #edf5fa;
   font: 13px/1.6 system-ui;
 }
+[hidden] {
+  display: none !important;
+}
 h1 {
   font-size: 19px;
 }

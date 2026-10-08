@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let accepting = false,
-  provider;
+  provider,
+  publishText;
 async function api(path, method = "GET", body) {
   const r = await fetch(`/api/v1/admin/${path}`, {
     method,
@@ -102,6 +103,23 @@ $("providerForm").onsubmit = (e) => {
     await refresh();
   });
 };
+$("publishText").onchange = () =>
+  run(async () => {
+    const wanted = $("publishText").checked;
+    try {
+      publishText = (
+        await api("subtitles", "PUT", {
+          before: publishText,
+          publishTextToPlayers: wanted,
+        })
+      ).publishTextToPlayers;
+      $("notice").textContent = publishText
+        ? "Playerにセリフの本文を表示します。"
+        : "Playerにはセリフの本文を表示しません。";
+    } finally {
+      $("publishText").checked = publishText;
+    }
+  });
 $("testConnection").onclick = () =>
   run(async () => {
     await refresh();
@@ -158,8 +176,11 @@ await run(async () => {
     });
     if (!r.ok) throw new Error((await r.json()).error);
   }
-  provider = (await api("config")).provider;
+  const config = await api("config");
+  provider = config.provider;
+  publishText = config.publishTextToPlayers;
   $("providerUrl").value = provider.baseUrl;
+  $("publishText").checked = publishText;
   await refresh();
   setInterval(() => run(refresh), 5000);
 });

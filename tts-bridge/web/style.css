@@ -156,6 +156,25 @@ pre {
 .list-item:first-child {
   border: 0;
 }
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.log:empty::before {
+  content: "まだセリフはありません。";
+  color: var(--muted);
+}
+.log-meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+.log-text {
+  margin: 4px 0 8px;
+  overflow-wrap: anywhere;
+}
 .badge {
   display: inline-block;
   border: 1px solid var(--border);

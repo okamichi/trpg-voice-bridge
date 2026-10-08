@@ -203,7 +203,7 @@ export function initialConfig(profiles) {
     roomId: "campaign-01",
     allowedChannels: ["main"],
     allowedKinds: ["dialogue"],
-    publishTextToPlayers: false,
+    publishTextToPlayers: true,
     provider: {
       type: "irodori",
       baseUrl: "http://127.0.0.1:8088",

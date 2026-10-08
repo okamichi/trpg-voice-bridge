@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -920,4 +920,127 @@ test("player registers only a bridge-generated preview as a new reference voice"
       ? new Response("exists", { status: 409 })
       : Response.json({ data: [] });
   assert.equal((await register({ previewId, voiceId: "race" })).status, 409);
+});
+
+test("snapshot keeps generated text in memory for the Player log only while published", async (t) => {
+  const { engine, store, dir } = setup(t);
+  const r = engine.ingress(event(engine, "log", "ログに残るセリフ"), "one");
+  await idle(engine);
+  const ready = () =>
+    engine.snapshot().orders.find((o) => o.orderId === r.orderId);
+  assert.equal(ready().status, "ready");
+  assert.equal(ready().text, "ログに残るセリフ");
+  assert.equal(
+    engine.history.find((n) => n.type === "audio.ready").text,
+    "ログに残るセリフ",
+  );
+  assert.equal(
+    engine.publicOrder(engine.orders.get(r.orderId)).text,
+    undefined,
+  );
+  for (const f of ["bridge.sqlite", "bridge.sqlite-wal"])
+    if (existsSync(join(dir, f)))
+      assert.ok(
+        !readFileSync(join(dir, f)).includes(Buffer.from("ログに残るセリフ")),
+      );
+  store.change((c) => {
+    c.publishTextToPlayers = false;
+  });
+  assert.equal(ready().text, undefined);
+  store.change((c) => {
+    c.publishTextToPlayers = true;
+  });
+  const o = engine.orders.get(r.orderId);
+  o.ready.retainUntil = 0;
+  engine.audio.get(o.ready.audio.id).retainUntil = 0;
+  engine.prune();
+  assert.equal(ready(), undefined);
+  const s = engine.ingress(event(engine, "after-reset", "停止で消える"), "one");
+  await idle(engine);
+  engine.reset();
+  assert.equal(engine.orders.get(s.orderId).text, undefined);
+  assert.deepEqual(engine.snapshot().orders, []);
+});
+
+test("admin toggles Player text with conflict detection; players cannot", async (t) => {
+  const a = await httpApp(t);
+  const put = (b, role = "admin") =>
+    a.call("/api/v1/admin/subtitles", "PUT", b, role);
+  assert.equal(a.store.config.publishTextToPlayers, true);
+  assert.equal(
+    (await put({ before: true, publishTextToPlayers: false }, "collector"))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await put({ before: true, publishTextToPlayers: "no" })).status,
+    422,
+  );
+  assert.equal(
+    (await put({ before: false, publishTextToPlayers: false })).status,
+    409,
+  );
+  const ok = await put({ before: true, publishTextToPlayers: false });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { publishTextToPlayers: false });
+  assert.equal(a.store.config.publishTextToPlayers, false);
+  a.engine.connect({ source: fixtureSource, collectorId: "one" });
+  a.engine.accepting = true;
+  a.engine.ingress(event(a.engine, "hidden", "見せない"), "one");
+  await idle(a.engine);
+  const ready = a.engine.history.find((n) => n.type === "audio.ready");
+  assert.equal(ready.text, undefined);
+  assert.equal(a.engine.snapshot().orders[0].text, undefined);
+});
+
+test("Player replay plays on this page after the current sound, even when muted or late", async () => {
+  const played = [];
+  let release;
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+  const meta = { bootId: "b", sessionId: "s", playbackEpoch: 1 };
+  const p = new Playback({
+    load: async (x) => x,
+    play: (x) =>
+      new Promise((r) => {
+        played.push(x.orderId);
+        release = r;
+      }),
+    stop: () => release?.(),
+  });
+  const item = (orderId, orderSeq, extra = {}) => ({
+    ...meta,
+    type: "audio.ready",
+    orderId,
+    orderSeq,
+    characterId: "c",
+    playBefore: Date.now() + 10000,
+    ...extra,
+  });
+  p.reset(meta, 0);
+  assert.equal(p.replay(item("early", 1)), false);
+  p.enable();
+  p.accept(item("live", 2));
+  await tick();
+  p.muted.add("c");
+  assert.equal(p.replay(item("old", 1, { playBefore: 0 })), true);
+  await tick();
+  assert.deepEqual(played, ["live"]);
+  release();
+  await tick();
+  assert.deepEqual(played, ["live", "old"]);
+  p.muted.clear();
+  p.accept(item("next", 3));
+  assert.equal(p.replay(item("next", 3)), true);
+  release();
+  await tick();
+  release();
+  await tick();
+  assert.deepEqual(played, ["live", "old", "next"]);
+  assert.equal(p.replay(item("stale", 4, { playbackEpoch: 0 })), false);
+  p.accept(item("live2", 5));
+  await tick();
+  p.replay(item("dropped", 4));
+  p.reset({ ...meta, playbackEpoch: 2 }, 5);
+  await tick();
+  assert.deepEqual(played, ["live", "old", "next", "live2"]);
 });

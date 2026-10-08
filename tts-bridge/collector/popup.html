@@ -5,12 +5,25 @@
   <h1>卓のチャットを接続</h1>
   <p id="detected">現在のタブを確認しています…</p>
   <form id="settings">
+    <label
+      >取得方式<select name="mode">
+        <option value="auto">自動判別</option>
+        <option value="fly">ユドナリウム with Fly</option>
+        <option value="udonarium">ユドナリウム（従来方式）</option>
+        <option value="fvtt">FVTT</option>
+      </select></label
+    >
     <label id="roomField" hidden
       >部屋の識別名<input
         name="contextId"
         placeholder="卓ごとに同じ名前を使ってください"
     /></label>
-    <label id="channelField" hidden>対象チャット<input name="channel" /></label>
+    <label id="channelField" hidden
+      >対象チャット<input name="channel" placeholder="例：MainTab"
+    /></label>
+    <label id="channelSelectField" hidden
+      >対象チャット<select name="channelChoice"></select
+    ></label>
     <details>
       <summary>Bridge接続先</summary>
       <label

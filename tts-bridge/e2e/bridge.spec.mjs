@@ -115,6 +115,51 @@ test("3 independent players hear 10 ordered messages once; reload ignores old wo
     .toEqual([id]);
   for (const c of contexts) await c.close();
 });
+test("Player log shows spoken text and replays only on the page that asked", async ({
+  browser,
+}) => {
+  const contexts = [],
+    pages = [];
+  for (let n = 0; n < 2; n++) {
+    const c = await browser.newContext();
+    contexts.push(c);
+    const p = await c.newPage();
+    pages.push(p);
+    await observe(p);
+    await p.goto(invite);
+    await expect(p.locator("#status")).toContainText("接続しました");
+    await p.getByRole("button", { name: "音声を有効にする" }).click();
+  }
+  const ids = [0, 1, 2].map((n) => post(n).orderId);
+  for (const p of pages)
+    await expect.poll(() => p.evaluate(() => window.started)).toEqual(ids);
+  const rows = pages[0].locator("#log li");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText("メリッサ");
+  await expect(rows.first()).toContainText("その2です。");
+  await expect(rows.last()).toContainText("その0です。");
+  await rows.last().getByRole("button", { name: "もう一度再生" }).click();
+  await expect
+    .poll(() => pages[0].evaluate(() => window.started))
+    .toEqual([...ids, ids[0]]);
+  await pages[1].waitForTimeout(300);
+  expect(await pages[1].evaluate(() => window.started)).toEqual(ids);
+  await pages[0].reload();
+  await expect(pages[0].locator("#status")).toContainText("接続しました");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText("その2です。");
+  await pages[0].waitForTimeout(200);
+  expect(await pages[0].evaluate(() => window.started)).toEqual([]);
+  await admin("subtitles", "PUT", {
+    before: true,
+    publishTextToPlayers: false,
+  });
+  post(3);
+  await expect(rows).toHaveCount(4);
+  await expect(rows.first()).toContainText("メリッサ");
+  await expect(rows.first()).not.toContainText("その3です。");
+  for (const c of contexts) await c.close();
+});
 test("Player discovery, shared editing, private preview and conflicts across participants", async ({
   browser,
 }) => {
@@ -191,6 +236,14 @@ test("management startup link, simplified controls and reset confirmation", asyn
   const player = await popupPromise;
   await expect(player.locator("#characters")).toContainText("メリッサ");
   await page.getByText("詳細設定", { exact: true }).click();
+  const publishText = page.getByLabel("Playerにセリフの本文を表示する");
+  await expect(publishText).toBeChecked();
+  await publishText.uncheck();
+  await expect(page.locator("#notice")).toContainText("表示しません");
+  expect(app.store.config.publishTextToPlayers).toBe(false);
+  await publishText.check();
+  await expect(page.locator("#notice")).toContainText("表示します");
+  expect(app.store.config.publishTextToPlayers).toBe(true);
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "設定を初期値に戻す" }).click();
   await expect(page.locator("#notice")).toContainText("実行しました");

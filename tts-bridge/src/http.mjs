@@ -347,6 +347,20 @@ export function createApp({
           });
           return json(res, 200, store.config.provider);
         }
+        if (path === "/api/v1/admin/subtitles" && method === "PUT") {
+          const b = await body(req);
+          check(
+            typeof b.publishTextToPlayers === "boolean",
+            "字幕設定が不正です",
+          );
+          store.change((c) => {
+            store.compare(c.publishTextToPlayers, b.before);
+            c.publishTextToPlayers = b.publishTextToPlayers;
+          });
+          return json(res, 200, {
+            publishTextToPlayers: store.config.publishTextToPlayers,
+          });
+        }
         if (path === "/api/v1/admin/pairings") {
           if (method === "GET")
             return json(

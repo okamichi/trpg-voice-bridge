@@ -12,6 +12,7 @@ export class Playback {
     this.current = null;
     this.cancelled = new Set();
     this.loading = null;
+    this.manual = null;
   }
   reset(meta, baseline) {
     this.generation++;
@@ -20,6 +21,7 @@ export class Playback {
     this.pending.clear();
     this.cancelled.clear();
     this.started.clear();
+    this.manual = null;
     this.loading?.controller.abort();
     this.stop();
     this.current = null;
@@ -32,9 +34,24 @@ export class Playback {
     this.enabled = false;
     this.generation++;
     this.pending.clear();
+    this.manual = null;
     this.loading?.controller.abort();
     this.stop();
     this.onState("blocked");
+  }
+  // A listener-requested replay plays on this page only, after the current
+  // sound, and ignores mute and the live deadline.
+  replay(item) {
+    if (
+      !this.enabled ||
+      this.cancelled.has(item.orderId) ||
+      item.sessionId !== this.meta?.sessionId ||
+      item.playbackEpoch !== this.meta?.playbackEpoch
+    )
+      return false;
+    this.manual = item;
+    this.pump();
+    return true;
   }
   accept(n) {
     if (
@@ -68,15 +85,18 @@ export class Playback {
     if (this.running || !this.enabled) return;
     this.running = true;
     try {
-      while (this.enabled && this.pending.size) {
-        const item = [...this.pending.values()].sort(
-          (a, b) => a.orderSeq - b.orderSeq,
-        )[0];
+      while (this.enabled && (this.manual || this.pending.size)) {
+        const manual = !!this.manual;
+        const item =
+          this.manual ??
+          [...this.pending.values()].sort((a, b) => a.orderSeq - b.orderSeq)[0];
+        this.manual = null;
         this.pending.delete(item.orderId);
         if (
-          item.playBefore < this.now() ||
-          this.muted.has(item.characterId) ||
-          this.started.has(item.orderId)
+          !manual &&
+          (item.playBefore < this.now() ||
+            this.muted.has(item.characterId) ||
+            this.started.has(item.orderId))
         )
           continue;
         const generation = this.generation;
@@ -89,9 +109,10 @@ export class Playback {
           if (
             generation !== this.generation ||
             this.cancelled.has(item.orderId) ||
-            item.playBefore < this.now() ||
             !this.enabled ||
-            this.muted.has(item.characterId)
+            (!manual &&
+              (item.playBefore < this.now() ||
+                this.muted.has(item.characterId)))
           )
             continue;
           this.started.add(item.orderId);
@@ -107,14 +128,15 @@ export class Playback {
             generation === this.generation &&
             !this.cancelled.has(item.orderId)
           )
-            this.onState("error", e.message);
+            this.onState("error", e.message, item);
         } finally {
           this.loading = null;
         }
       }
     } finally {
       this.running = false;
-      if (this.enabled && this.pending.size) queueMicrotask(() => this.pump());
+      if (this.enabled && (this.manual || this.pending.size))
+        queueMicrotask(() => this.pump());
     }
   }
 }
