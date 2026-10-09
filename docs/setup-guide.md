@@ -18,6 +18,7 @@ URLはBridgeとIrodoriを音声担当者のPCで動かす場合の例です。`1
 | Bridge | 音声担当者のPCの`127.0.0.1:8090` | 発言を受け、キャラと声を選び、音声を参加者へ配信する |
 | 管理画面 | 音声担当者のブラウザでBridgeの`/admin/` | 接続状態・読み上げ開始停止・参加URLを管理する |
 | Irodori-TTS-Server | 音声担当者のPCの`127.0.0.1:8088` | Bridgeから受けたセリフのWAV音声を生成する |
+| speech.cpp serve (fork版) | 音声担当者のPCの`127.0.0.1:8088` | Bridgeから受けたセリフのWAV音声を生成する(Irodori-TTS-Serverの代替) |
 | Player | 卓参加者全員（GM・PL）のブラウザでBridgeの`/player/` | 音声を再生し、全員でキャラの声を設定する |
 
 ### ASCII図
@@ -114,7 +115,7 @@ VTTの種類・入力元ID・FVTTのワールドID・対象チャットは自動
 
 この手順では音声担当者のPCでbridgeとIrodoriが動きます。VTT自体はインターネット上の別のサーバーでも構いません。
 
-1. Irodori-TTS-Serverを起動し、`http://127.0.0.1:8088/health`が応答することを確認します。
+1. Irodori-TTS-Serverを起動し、`http://127.0.0.1:8088/health`が応答することを確認します。Irodori-TTS-Serverの代わりに、speech.cpp の互換モードを搭載したフォーク版 https://github.com/okamichi/speech.cpp も使用可能。
 2. `tts-bridge/`で`npm ci`、続いて`npm start`を実行します。Node.js 22.13以上が必要です。
 3. 起動ログの管理用リンクを開き、Irodoriの接続状態を確認します。
 4. Chromeの拡張機能画面でデベロッパーモードを有効にし、`tts-bridge/collector/`を読み込みます。
