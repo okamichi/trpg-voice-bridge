@@ -52,6 +52,18 @@
         <p class="muted">
           オフにすると、Playerのログには話者名だけを表示します。次のセリフから反映します。
         </p>
+        <label
+          >文と文の間（秒）<input
+            id="sentencePause"
+            type="number"
+            min="0"
+            max="3"
+            step="0.1"
+            required
+        /></label>
+        <p class="muted">
+          複数の文を含むセリフは、1文ずつ生成して順に再生します。その文と文の間に入れる無音の長さです。次のセリフから反映します。
+        </p>
       </section>
       <section>
         <h2>接続・セッション</h2>

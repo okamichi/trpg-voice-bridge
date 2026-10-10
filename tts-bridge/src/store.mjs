@@ -132,13 +132,16 @@ export class Store {
       found = resolveCharacter(c, event);
       if (found) return;
       const { adapter, instanceId, contextId } = event.source;
+      // A discovered speaker is bound to its character (FVTT: the Actor), so it
+      // keeps its voice across scenes. A token binding is only an explicit
+      // per-token override, or the fallback for a speaker without an ID.
       const binding = {
         adapter,
         instanceId,
         contextId,
-        ...(event.speaker.tokenId && event.speaker.sceneId
-          ? { tokenId: event.speaker.tokenId, sceneId: event.speaker.sceneId }
-          : { speakerId: event.speaker.id }),
+        ...(event.speaker.id
+          ? { speakerId: event.speaker.id }
+          : { tokenId: event.speaker.tokenId, sceneId: event.speaker.sceneId }),
       };
       found = {
         id: randomUUID(),
@@ -204,6 +207,7 @@ export function initialConfig(profiles) {
     allowedChannels: ["main"],
     allowedKinds: ["dialogue"],
     publishTextToPlayers: true,
+    sentencePauseMs: 900,
     provider: {
       type: "irodori",
       baseUrl: "http://127.0.0.1:8088",

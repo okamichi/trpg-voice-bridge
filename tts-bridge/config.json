@@ -4,6 +4,7 @@
   "allowedChannels": ["main"],
   "allowedKinds": ["dialogue"],
   "publishTextToPlayers": true,
+  "sentencePauseMs": 900,
   "provider": {
     "type": "irodori",
     "baseUrl": "http://127.0.0.1:8088",

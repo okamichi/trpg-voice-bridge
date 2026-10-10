@@ -46,7 +46,7 @@ async function admin(path, method = "GET", body) {
 }
 const command = (command) =>
   admin("commands", "POST", { command, commandId: crypto.randomUUID() });
-function post(n) {
+function post(n, text = `こんにちは、その${n}です。`) {
   return app.engine.ingress(
     {
       schemaVersion: 1,
@@ -58,7 +58,7 @@ function post(n) {
       kind: "dialogue",
       visibility: "public",
       channel: "main",
-      text: `こんにちは。その${n}です。`,
+      text,
       occurredAt: new Date().toISOString(),
     },
     "collector",
@@ -114,6 +114,26 @@ test("3 independent players hear 10 ordered messages once; reload ignores old wo
     .poll(() => pages[0].evaluate(() => window.started))
     .toEqual([id]);
   for (const c of contexts) await c.close();
+});
+test("a message of several sentences plays sentence by sentence, logged one per line", async ({
+  page,
+}) => {
+  await observe(page);
+  await page.goto(invite);
+  await expect(page.locator("#status")).toContainText("接続しました");
+  await page.getByRole("button", { name: "音声を有効にする" }).click();
+  const first = post(0, "みんな、聞いて。地図を見つけたの！行こう？");
+  expect(first.parts).toBe(3);
+  const ids = [...app.engine.orders.values()]
+    .filter((o) => o.groupId === first.orderId)
+    .sort((a, b) => a.part - b.part)
+    .map((o) => o.orderId);
+  await expect.poll(() => page.evaluate(() => window.started)).toEqual(ids);
+  const rows = page.locator("#log li");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText("行こう？");
+  await expect(rows.nth(2)).toContainText("みんな、聞いて。");
+  expect(await page.evaluate(() => window.maxSounds)).toBe(1);
 });
 test("Player log shows spoken text and replays only on the page that asked", async ({
   browser,
@@ -304,6 +324,12 @@ test("management startup link, simplified controls and reset confirmation", asyn
   await publishText.check();
   await expect(page.locator("#notice")).toContainText("表示します");
   expect(app.store.config.publishTextToPlayers).toBe(true);
+  const pause = page.getByLabel("文と文の間（秒）");
+  await expect(pause).toHaveValue("0.9");
+  await pause.fill("0.5");
+  await pause.dispatchEvent("change");
+  await expect(page.locator("#notice")).toContainText("0.5秒");
+  expect(app.store.config.sentencePauseMs).toBe(500);
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "設定を初期値に戻す" }).click();
   await expect(page.locator("#notice")).toContainText("実行しました");

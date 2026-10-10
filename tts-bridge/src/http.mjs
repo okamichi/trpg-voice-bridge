@@ -8,7 +8,7 @@ import {
   saveCharacter,
   removeCharacter,
 } from "./character-settings.mjs";
-import { Engine } from "./engine.mjs";
+import { Engine, DEFAULT_SENTENCE_PAUSE_MS } from "./engine.mjs";
 import {
   check,
   HttpError,
@@ -351,6 +351,23 @@ export function createApp({
             c.provider.baseUrl = b.baseUrl;
           });
           return json(res, 200, store.config.provider);
+        }
+        if (path === "/api/v1/admin/playback" && method === "PUT") {
+          const b = await body(req);
+          check(
+            Number.isInteger(b.sentencePauseMs),
+            "文の間は0～3000ミリ秒です",
+          );
+          store.change((c) => {
+            store.compare(
+              c.sentencePauseMs ?? DEFAULT_SENTENCE_PAUSE_MS,
+              b.before,
+            );
+            c.sentencePauseMs = b.sentencePauseMs;
+          });
+          return json(res, 200, {
+            sentencePauseMs: store.config.sentencePauseMs,
+          });
         }
         if (path === "/api/v1/admin/subtitles" && method === "PUT") {
           const b = await body(req);

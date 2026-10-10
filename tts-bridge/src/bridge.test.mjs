@@ -11,6 +11,7 @@ import { mockWav, inspectWav, payload } from "./provider.mjs";
 import { saveCharacter, removeCharacter } from "./character-settings.mjs";
 import { resolveCharacter } from "./contracts.mjs";
 import { Playback } from "../web/playback.js";
+import { splitUtterance, MAX_PARTS } from "./sentences.mjs";
 const fixtureSource = {
   adapter: "fixture",
   instanceId: "test",
@@ -1150,4 +1151,289 @@ test("Player replay plays on this page after the current sound, even when muted 
   p.reset({ ...meta, playbackEpoch: 2 }, 5);
   await tick();
   assert.deepEqual(played, ["live", "old", "next", "live2"]);
+});
+
+test("long messages split at sentence ends; free acting cues reach every sentence", () => {
+  assert.deepEqual(splitUtterance("こんにちは。"), [
+    { text: "こんにちは。", display: "こんにちは。" },
+  ]);
+  assert.deepEqual(
+    splitUtterance("みんな、聞いて。地図を見つけたの！本当？").map(
+      (p) => p.display,
+    ),
+    ["みんな、聞いて。", "地図を見つけたの！", "本当？"],
+  );
+  const cued = splitUtterance(
+    "（演技:震える声で）誰か……いるの？ねえ、返事して。",
+  );
+  assert.deepEqual(cued, [
+    {
+      text: "（演技:震える声で）誰か……いるの？",
+      display: "（演技:震える声で）誰か……いるの？",
+    },
+    {
+      text: "（演技:震える声で）ねえ、返事して。",
+      display: "ねえ、返事して。",
+    },
+  ]);
+  // Word cues stay in their sentence; a cue alone is not a sentence.
+  assert.deepEqual(
+    splitUtterance("（怒り）ふざけるな！（間）……もういい。").map((p) => p.text),
+    ["（怒り）ふざけるな！", "（間）……もういい。"],
+  );
+  assert.equal(splitUtterance("（間）").length, 1);
+  // Ends inside parentheses do not split; closing marks stay with their sentence.
+  assert.deepEqual(
+    splitUtterance("（いや、違う。そうじゃない）と思った。次へ。").map(
+      (p) => p.display,
+    ),
+    ["（いや、違う。そうじゃない）と思った。", "次へ。"],
+  );
+  assert.deepEqual(
+    splitUtterance("えっ！？本当に！？").map((p) => p.display),
+    ["えっ！？", "本当に！？"],
+  );
+  assert.deepEqual(
+    splitUtterance("一行目\n二行目").map((p) => p.display),
+    ["一行目", "二行目"],
+  );
+  const many = splitUtterance(
+    Array.from({ length: MAX_PARTS + 4 }, (_, i) => `文${i + 1}です。`).join(
+      "",
+    ),
+  );
+  assert.equal(many.length, MAX_PARTS);
+  assert.equal(
+    many.at(-1).display,
+    `文${MAX_PARTS}です。文${MAX_PARTS + 1}です。文${MAX_PARTS + 2}です。文${MAX_PARTS + 3}です。文${MAX_PARTS + 4}です。`,
+  );
+});
+
+test("each sentence becomes its own order, ready and published in order", async (t) => {
+  const { engine, store } = setup(t);
+  const sent = [];
+  store.config.provider.type = "irodori";
+  engine.options.fetchImpl = async (url, init) => {
+    sent.push(JSON.parse(init.body).input);
+    return new Response(mockWav());
+  };
+  const r = engine.ingress(
+    event(
+      engine,
+      "long",
+      "（演技:小声で）みんな、聞いて。地図を見つけたの。行こう。",
+    ),
+    "one",
+  );
+  assert.equal(r.parts, 3);
+  await idle(engine);
+  assert.deepEqual(sent, [
+    "みんな、聞いて。",
+    "地図を見つけたの。",
+    "行こう。",
+  ]);
+  const ready = engine.history.filter((n) => n.type === "audio.ready");
+  assert.deepEqual(
+    ready.map((n) => n.part),
+    [0, 1, 2],
+  );
+  assert.deepEqual(
+    ready.map((n) => n.orderSeq),
+    [r.orderSeq, r.orderSeq + 1, r.orderSeq + 2],
+  );
+  assert.ok(ready.every((n) => n.groupId === r.orderId && n.parts === 3));
+  assert.deepEqual(
+    ready.map((n) => n.pauseBeforeMs),
+    [0, 900, 900],
+  );
+  assert.deepEqual(
+    ready.map((n) => n.text),
+    ["（演技:小声で）みんな、聞いて。", "地図を見つけたの。", "行こう。"],
+  );
+  assert.deepEqual(
+    engine.snapshot().orders.map((o) => o.text),
+    ready.map((n) => n.text),
+  );
+  // A duplicate delivery of the message answers with its first sentence.
+  const again = engine.ingress(
+    event(
+      engine,
+      "long",
+      "（演技:小声で）みんな、聞いて。地図を見つけたの。行こう。",
+    ),
+    "one",
+  );
+  assert.equal(again.duplicate, true);
+  assert.equal(again.orderId, r.orderId);
+  // A one-sentence message keeps the old shape.
+  const single = engine.ingress(event(engine, "short", "はい。"), "one");
+  await idle(engine);
+  assert.equal(single.parts, undefined);
+  assert.equal(engine.history.at(-1).groupId, undefined);
+});
+
+test("stopping cancels the sentences not yet made; the queue counts messages", async (t) => {
+  const { engine, store } = setup(t);
+  let release;
+  store.config.provider.type = "irodori";
+  engine.options.fetchImpl = () =>
+    new Promise((r) => (release = () => r(new Response(mockWav()))));
+  engine.ingress(event(engine, "a", "一。二。三。四。"), "one");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(engine.queue.length, 3);
+  assert.equal(engine.pendingMessages(), 1);
+  engine.reset();
+  release();
+  await idle(engine);
+  assert.equal(
+    engine.history.filter((n) => n.type === "audio.ready").length,
+    0,
+  );
+  assert.ok(
+    [...engine.orders.values()].every(
+      (o) => o.status === "cancelled" && !o.text,
+    ),
+  );
+});
+
+test("admin sets the pause between sentences with conflict detection", async (t) => {
+  const a = await httpApp(t);
+  const put = (b, role = "admin") =>
+    a.call("/api/v1/admin/playback", "PUT", b, role);
+  assert.equal(a.store.config.sentencePauseMs, 900);
+  assert.equal(
+    (await put({ before: 900, sentencePauseMs: 500 }, "collector")).status,
+    401,
+  );
+  assert.equal((await put({ before: 900, sentencePauseMs: 3500 })).status, 422);
+  assert.equal((await put({ before: 900, sentencePauseMs: 0.5 })).status, 422);
+  assert.equal((await put({ before: 100, sentencePauseMs: 500 })).status, 409);
+  const ok = await put({ before: 900, sentencePauseMs: 500 });
+  assert.deepEqual(await ok.json(), { sentencePauseMs: 500 });
+  a.engine.connect({ source: fixtureSource, collectorId: "one" });
+  a.engine.accepting = true;
+  a.engine.ingress(event(a.engine, "p", "一つ目。二つ目。"), "one");
+  await idle(a.engine);
+  assert.deepEqual(
+    a.engine.history
+      .filter((n) => n.type === "audio.ready")
+      .map((n) => n.pauseBeforeMs),
+    [0, 500],
+  );
+});
+
+test("Player prefetches the next sentence while one plays and waits only the pause", async () => {
+  const log = [];
+  const releases = new Map();
+  let clock = 0;
+  const meta = { bootId: "b", sessionId: "s", playbackEpoch: 1 };
+  const p = new Playback({
+    now: () => clock,
+    load: async (x) => {
+      log.push(`load ${x.orderId}`);
+      return x;
+    },
+    play: (x) =>
+      new Promise((r) => {
+        log.push(`play ${x.orderId}`);
+        releases.set(x.orderId, () => {
+          clock += 1000;
+          r();
+        });
+      }),
+    stop: () => {},
+    sleep: async (ms) => {
+      log.push(`pause ${ms}`);
+      clock += ms;
+    },
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 1));
+  const item = (orderId, orderSeq, part, extra = {}) => ({
+    ...meta,
+    type: "audio.ready",
+    orderId,
+    orderSeq,
+    characterId: "c",
+    playBefore: 1e12,
+    groupId: "g",
+    part,
+    parts: 3,
+    pauseBeforeMs: part ? 900 : 0,
+    ...extra,
+  });
+  p.reset(meta, 0);
+  p.enable();
+  p.accept(item("s1", 1, 0));
+  await tick();
+  // The second sentence arrives while the first plays and is fetched at once.
+  p.accept(item("s2", 2, 1));
+  await tick();
+  assert.deepEqual(log, ["load s1", "play s1", "load s2"]);
+  releases.get("s1")();
+  await tick();
+  assert.deepEqual(log, [
+    "load s1",
+    "play s1",
+    "load s2",
+    "pause 900",
+    "play s2",
+  ]);
+  // Another speaker's message follows without the sentence pause.
+  p.accept(
+    item("other", 4, 0, {
+      groupId: "h",
+      parts: undefined,
+      pauseBeforeMs: undefined,
+    }),
+  );
+  await tick();
+  releases.get("s2")();
+  await tick();
+  assert.deepEqual(log.slice(-2), ["load other", "play other"].slice(-2));
+  assert.ok(!log.slice(5).some((x) => x.startsWith("pause")));
+  // A skipped sentence drops its prefetch; reset clears everything.
+  p.accept(item("s3", 5, 2));
+  await tick();
+  p.accept({ ...meta, type: "order.skipped", orderId: "s3" });
+  assert.equal(p.prefetched, null);
+  p.reset({ ...meta, playbackEpoch: 2 }, 5);
+  assert.equal(p.prefetched, null);
+});
+
+test("a discovered FVTT speaker is bound to its Actor and keeps its voice across scenes", (t) => {
+  const { engine, store } = setup(t);
+  const say = (messageId, sceneId, tokenId) =>
+    store.discover({
+      ...event(engine, messageId),
+      speaker: {
+        kind: "character",
+        id: "actor-r",
+        name: "リマルド",
+        sceneId,
+        tokenId,
+      },
+    });
+  const first = say("m1", "scene-1", "token-1");
+  assert.equal(first.created, true);
+  assert.deepEqual(first.character.bindings, [
+    { ...fixtureSource, speakerId: "actor-r" },
+  ]);
+  const other = say("m2", "scene-2", "token-9");
+  assert.equal(other.created, false);
+  assert.equal(other.character.id, first.character.id);
+  // A token binding added on purpose still overrides the Actor for that token.
+  store.change((c) => {
+    c.characters.push({
+      id: "goblin-2",
+      displayName: "ゴブリン2",
+      enabled: true,
+      voiceProfileId: null,
+      bindings: [{ ...fixtureSource, sceneId: "scene-2", tokenId: "token-9" }],
+    });
+  });
+  assert.equal(say("m3", "scene-2", "token-9").character.id, "goblin-2");
+  assert.equal(
+    say("m4", "scene-3", "token-5").character.id,
+    first.character.id,
+  );
 });

@@ -17,6 +17,8 @@ import {
   sourceKey,
 } from "./contracts.mjs";
 import { synthesize, inspectWav, AUDIO_LIMIT } from "./provider.mjs";
+import { splitUtterance } from "./sentences.mjs";
+export const DEFAULT_SENTENCE_PAUSE_MS = 900;
 export class Engine extends EventEmitter {
   constructor(store, options = {}) {
     super();
@@ -83,8 +85,10 @@ export class Engine extends EventEmitter {
         .filter((o) => o.epoch === this.playbackEpoch)
         .map((o) => ({
           ...this.publicOrder(o),
-          ...(this.config.publishTextToPlayers && o.status === "ready" && o.text
-            ? { text: o.text }
+          ...(this.config.publishTextToPlayers &&
+          o.status === "ready" &&
+          o.displayText
+            ? { text: o.displayText }
             : {}),
         })),
     };
@@ -97,8 +101,22 @@ export class Engine extends EventEmitter {
       characterId: o.characterId,
       speakerName: o.speakerName,
       error: o.error,
+      ...(o.parts > 1
+        ? {
+            groupId: o.groupId,
+            part: o.part,
+            parts: o.parts,
+            pauseBeforeMs: o.pauseBeforeMs,
+          }
+        : {}),
       ...o.ready,
     };
+  }
+  /** Messages waiting or generating; the sentences of one message count once. */
+  pendingMessages() {
+    const work = this.working ? [this.working, ...this.queue] : this.queue;
+    return new Set(work.map((o) => (o.preview ? o : (o.groupId ?? o.orderId))))
+      .size;
   }
   connect(body) {
     check(body?.source && typeof body.source === "object", "入力元が必要です");
@@ -195,14 +213,10 @@ export class Engine extends EventEmitter {
       status = enabled ? "queued" : "ignored";
     if (enabled) {
       check(!this.degraded, "TTSが不調です。管理画面で確認してください", 503);
-      check(
-        this.queue.length + Number(this.busy) < 30,
-        "生成キューが満杯です",
-        429,
-      );
+      check(this.pendingMessages() < 30, "生成キューが満杯です", 429);
       this.prune();
       check(
-        this.audioBytes() + (this.queue.length + 1) * AUDIO_LIMIT <=
+        this.audioBytes() + (this.pendingMessages() + 1) * AUDIO_LIMIT <=
           this.maxAudioBytes,
         "音声保管容量が不足しています",
         429,
@@ -219,28 +233,60 @@ export class Engine extends EventEmitter {
           ? "読み上げ停止中"
           : "声が未設定またはキャラ無効",
       };
-    const o = {
+    let parts;
+    try {
+      parts = splitUtterance(e.text);
+    } catch {
+      parts = [{ text: e.text, display: e.text.trim() }];
+    }
+    const voice = this.config.voiceProfiles.find(
+        (v) => v.id === ch.voiceProfileId,
+      ),
+      pause = this.config.sentencePauseMs ?? DEFAULT_SENTENCE_PAUSE_MS,
+      createdAt = Date.now();
+    // Each sentence is its own order, so the first one plays while the rest are made.
+    parts.forEach((p, part) => {
+      const id = part ? randomUUID() : orderId,
+        seq = part
+          ? this.store.record(
+              canonical(["part", key, part]),
+              fingerprint,
+              id,
+              status,
+            )
+          : orderSeq,
+        o = {
+          orderId: id,
+          orderSeq: seq,
+          status,
+          characterId: ch.id,
+          speakerName: ch.displayName,
+          text: p.text,
+          displayText: p.display,
+          created: createdAt,
+          epoch: this.playbackEpoch,
+          voice: structuredClone(voice),
+          provider: structuredClone(this.config.provider),
+          groupId: orderId,
+          part,
+          parts: parts.length,
+          pauseBeforeMs: part ? pause : 0,
+        };
+      this.orders.set(id, o);
+      this.queue.push(o);
+    });
+    this.pump();
+    return {
+      http: 202,
       orderId,
       orderSeq,
-      status,
-      characterId: ch.id,
-      speakerName: ch.displayName,
-      text: e.text,
-      created: Date.now(),
-      epoch: this.playbackEpoch,
-      voice: structuredClone(
-        this.config.voiceProfiles.find((v) => v.id === ch.voiceProfileId),
-      ),
-      provider: structuredClone(this.config.provider),
+      status: "queued",
+      ...(parts.length > 1 ? { parts: parts.length } : {}),
     };
-    this.orders.set(orderId, o);
-    this.queue.push(o);
-    this.pump();
-    return { http: 202, orderId, orderSeq, status: "queued" };
   }
   replay(orderId) {
     check(
-      !this.degraded && this.queue.length + Number(this.busy) < 30,
+      !this.degraded && this.pendingMessages() < 30,
       "生成キューが利用できません",
       429,
     );
@@ -294,6 +340,7 @@ export class Engine extends EventEmitter {
       return;
     this.setStatus(o, status, error);
     delete o.text;
+    delete o.displayText;
     this.notify("order.skipped", {
       orderId: o.orderId,
       orderSeq: o.orderSeq,
@@ -332,6 +379,7 @@ export class Engine extends EventEmitter {
     const o = this.queue.shift();
     if (!o) return;
     this.busy = true;
+    this.working = o;
     try {
       if (o.preview) {
         if (Date.now() - o.created > 180000)
@@ -379,7 +427,9 @@ export class Engine extends EventEmitter {
       this.setStatus(o, "ready");
       this.notify("audio.ready", {
         ...this.publicOrder(o),
-        ...(this.config.publishTextToPlayers ? { text: o.text } : {}),
+        ...(this.config.publishTextToPlayers
+          ? { text: o.displayText ?? o.text }
+          : {}),
       });
       // Text stays in memory with the order until prune() so a reloaded
       // Player can rebuild its log; it is never written to SQLite.
@@ -394,6 +444,7 @@ export class Engine extends EventEmitter {
         this.skip(o, "failed", this.lastError);
     } finally {
       this.busy = false;
+      this.working = null;
       if (!this.closed) queueMicrotask(() => this.pump());
     }
   }
@@ -403,7 +454,7 @@ export class Engine extends EventEmitter {
       "試聴は500文字以内です",
     );
     check(!this.degraded, "TTS不調を確認してください", 503);
-    check(this.queue.length < 30, "生成キューが満杯です", 429);
+    check(this.pendingMessages() < 30, "生成キューが満杯です", 429);
     return new Promise((resolve, reject) => {
       this.queue.push({
         preview: true,
@@ -424,6 +475,7 @@ export class Engine extends EventEmitter {
       if (["queued", "synthesizing", "ready"].includes(o.status)) {
         this.setStatus(o, "cancelled");
         delete o.text;
+        delete o.displayText;
       }
     for (const o of this.queue)
       if (o.preview) o.reject(new Error("全停止しました"));

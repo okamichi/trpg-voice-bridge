@@ -144,6 +144,13 @@ export function configSchema(c) {
   );
   check(typeof c.publishTextToPlayers === "boolean", "字幕設定が不正です");
   check(
+    c.sentencePauseMs === undefined ||
+      (Number.isInteger(c.sentencePauseMs) &&
+        c.sentencePauseMs >= 0 &&
+        c.sentencePauseMs <= 3000),
+    "文の間は0～3000ミリ秒です",
+  );
+  check(
     c.provider &&
       typeof c.provider.baseUrl === "string" &&
       URL.canParse(c.provider.baseUrl),

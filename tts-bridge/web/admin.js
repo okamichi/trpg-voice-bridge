@@ -1,7 +1,8 @@
 const $ = (id) => document.getElementById(id);
 let accepting = false,
   provider,
-  publishText;
+  publishText,
+  sentencePauseMs;
 async function api(path, method = "GET", body) {
   const r = await fetch(`/api/v1/admin/${path}`, {
     method,
@@ -120,6 +121,24 @@ $("publishText").onchange = () =>
       $("publishText").checked = publishText;
     }
   });
+$("sentencePause").onchange = () =>
+  run(async () => {
+    const wanted = Math.round(Number($("sentencePause").value) * 1000);
+    try {
+      if (!Number.isFinite(wanted) || wanted < 0 || wanted > 3000)
+        throw new Error("文と文の間は0～3秒で指定してください");
+      sentencePauseMs = (
+        await api("playback", "PUT", {
+          before: sentencePauseMs,
+          sentencePauseMs: wanted,
+        })
+      ).sentencePauseMs;
+      $("notice").textContent =
+        `文と文の間を${sentencePauseMs / 1000}秒にしました。`;
+    } finally {
+      $("sentencePause").value = sentencePauseMs / 1000;
+    }
+  });
 $("testConnection").onclick = () =>
   run(async () => {
     await refresh();
@@ -179,8 +198,10 @@ await run(async () => {
   const config = await api("config");
   provider = config.provider;
   publishText = config.publishTextToPlayers;
+  sentencePauseMs = config.sentencePauseMs ?? 900;
   $("providerUrl").value = provider.baseUrl;
   $("publishText").checked = publishText;
+  $("sentencePause").value = sentencePauseMs / 1000;
   await refresh();
   setInterval(() => run(refresh), 5000);
 });

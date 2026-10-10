@@ -8,6 +8,8 @@
   <main class="player">
     <p class="eyebrow">TRPG VOICE BRIDGE</p>
     <h1>物語に、声を。</h1>
+	<p>ここは音声再生用ページです。</p>
+	<hr />
     <p>音声を有効にすると、この卓の新しいセリフが順番に流れます。</p>
     <p id="status" role="status">接続しています…</p>
     <button id="enable">音声を有効にする</button
@@ -21,6 +23,39 @@
     <details>
       <summary>キャラクター別ミュート</summary>
       <div id="mutes"></div>
+    </details>
+    <details>
+      <summary>セリフに感情・演技をつける</summary>
+      <p>
+        VTTのチャットで、セリフの中に全角の丸カッコか絵文字で指示を書きます。カッコの指示は読み上げられません。
+      </p>
+      <p>
+        例：（怒り）ふざけるな！（間）……もういい。<br />
+        例：😲えっ、本当に？<br />
+        例：（演技:震える声で、怯えながら）誰か……いるの？
+      </p>
+      <table>
+        <tr><th>書き方</th><th>絵文字</th><th>書き方</th><th>絵文字</th></tr>
+        <tr><td>（喜び）</td><td>😆</td><td>（怒り）</td><td>😠</td></tr>
+        <tr><td>（悲しみ）</td><td>😭</td><td>（驚き）</td><td>😲</td></tr>
+        <tr><td>（心配）</td><td>😟</td><td>（緊張）</td><td>😰</td></tr>
+        <tr><td>（安堵）</td><td>😌</td><td>（自信）</td><td>😎</td></tr>
+        <tr><td>（照れ）</td><td>🫣</td><td>（優しく）</td><td>🫶</td></tr>
+        <tr><td>（囁き）（ささやき）（小声）</td><td>👂</td><td>（笑い）</td><td>🤭</td></tr>
+        <tr><td>（ため息）</td><td>😮‍💨</td><td>（叫び）</td><td>😱</td></tr>
+        <tr><td>（早口）</td><td>⏩</td><td>（ゆっくり）</td><td>🐢</td></tr>
+        <tr><td>（眠そう）</td><td>😪</td><td>（懇願）</td><td>🙏</td></tr>
+        <tr><td>（ナレーション）</td><td>📖</td><td>（間）</td><td>⏸️</td></tr>
+      </table>
+      <ul>
+        <li>表の言葉か絵文字を書くと、その文の中で、書いた位置から演技が変わります。</li>
+        <li>表にない演技は「（演技:説明）」と書くと、そのセリフ全体に効きます。</li>
+        <li>それ以外のカッコ（例：剣（つるぎ））は、そのまま読み上げます。</li>
+        <li>指示は1つ100文字まで、「（演技:…）」の合計は200文字までです。</li>
+      </ul>
+      <p class="muted">
+        効き方は声やモデルによって違い、効かないこともあります。下の「自分だけで試聴」の欄にも同じ書き方が使えます。
+      </p>
     </details>
     <p class="muted">
       画面ロックや長い中断の後は、再開ボタンを押してください。
