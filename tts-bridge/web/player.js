@@ -1,7 +1,8 @@
 import { refreshCharacters } from "./characters.js";
 import { Playback } from "./playback.js";
+import { randomUUID } from "./uuid.js";
 const $ = (id) => document.getElementById(id),
-  clientId = crypto.randomUUID();
+  clientId = randomUUID();
 let socket,
   context,
   gain,

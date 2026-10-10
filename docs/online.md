@@ -16,6 +16,32 @@ Caddyの`reverse_proxy`はWebSocketのUpgradeにも対応します。`handle`で
 
 招待はURLフラグメントからPOSTで交換し、その後URLから削除します。公開HTTPSホストでは閲覧cookieにSecureを付けます。APIキー、招待、cookieをアクセスログの本文やクエリへ追加しないでください。
 
+## HTTPをsocatで転送する場合
+
+PlayerはHTTP/WSでも動作します。socatやNATはHTTPのHostヘッダーを変更しないため、`TTS_PUBLIC_ORIGIN`には参加者がブラウザで開くURLのオリジンを指定します。バインド先のLANアドレスや転送先の`127.0.0.1`ではありません。HTTPは通信を暗号化しないため、インターネット公開にはHTTPSを推奨します。
+
+例えば、`http://203.0.113.10:8011` → ルータのNAT → `192.168.1.10:8011` → socat → `127.0.0.1:8090`なら、`tts-bridge`ディレクトリで次のように起動します。IPアドレスと公開ポートは実際のものに置き換えてください。
+
+```sh
+TTS_BRIDGE_HOST=127.0.0.1 TTS_BRIDGE_PORT=8090 \
+  TTS_PUBLIC_ORIGIN=http://203.0.113.10:8011 npm start
+```
+
+別のターミナルで転送を起動します。
+
+socat を使う場合(MacOS)
+
+```sh
+sudo socat TCP-LISTEN:8011,bind=192.168.1.10,reuseaddr,fork TCP:127.0.0.1:8090
+```
+
+ssh を使う場合
+```
+ssh -N -g  -L 192.168.1.10:8011:127.0.0.1:8090 user@localhost
+```
+
+socatやSSHのポート転送はHTTPSへ変換しません。ブラウザでは`http://`を明示します。Bridgeを再起動したら、ローカル管理用リンクを開き、参加URLを再発行して使ってください。管理画面とCollectorの接続先は`http://127.0.0.1:8090`のままです。
+
 ## 実機確認
 
 - 外部URLから管理画面・管理API・Collector入力を開けない。

@@ -3,7 +3,11 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Store, initialConfig } from "./store.mjs";
-import { characterSettings, saveCharacter } from "./character-settings.mjs";
+import {
+  characterSettings,
+  saveCharacter,
+  removeCharacter,
+} from "./character-settings.mjs";
 import { Engine } from "./engine.mjs";
 import {
   check,
@@ -268,6 +272,7 @@ export function createApp({
         "/web/player.js": ["player.js", "text/javascript"],
         "/web/admin.js": ["admin.js", "text/javascript"],
         "/web/playback.js": ["playback.js", "text/javascript"],
+        "/web/uuid.js": ["uuid.js", "text/javascript"],
       };
       if (method === "GET" && staticFiles[path]) {
         if (path === "/admin/" || path === "/web/admin.js") origin(req, true);
@@ -600,11 +605,14 @@ export function createApp({
           return json(res, 200, characterSettings(store));
         if (method === "GET" && settingsRoute[2] === "voices")
           return json(res, 200, await voices());
-        if (method === "PATCH" && settingsRoute[3]) {
+        if (["PATCH", "DELETE"].includes(method) && settingsRoute[3]) {
           const b = await body(req, 65536);
           const result = await idempotent(req, b, () => {
             const previous = store.config;
-            const value = saveCharacter(store, settingsRoute[3], b);
+            const value =
+              method === "DELETE"
+                ? removeCharacter(store, settingsRoute[3], b)
+                : saveCharacter(store, settingsRoute[3], b);
             changed(previous);
             return { value };
           });

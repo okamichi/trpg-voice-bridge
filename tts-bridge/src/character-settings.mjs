@@ -43,3 +43,14 @@ export function saveCharacter(store, characterId, input) {
   });
   return value;
 }
+
+export function removeCharacter(store, characterId, input) {
+  let value;
+  store.change((c) => {
+    const index = c.characters.findIndex((x) => x.id === characterId);
+    check(index >= 0, "キャラが見つかりません", 404);
+    store.compare(c.characters[index], input.before);
+    [value] = c.characters.splice(index, 1);
+  });
+  return value;
+}

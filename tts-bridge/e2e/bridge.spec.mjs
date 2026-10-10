@@ -221,6 +221,66 @@ test("Player discovery, shared editing, private preview and conflicts across par
     for (const c of contexts) await c.close();
   }
 });
+test("Player deletes only a character registration; shared voices survive and new speech rediscovers it", async ({
+  browser,
+}) => {
+  const old = structuredClone(app.store.config.characters[0]);
+  const voices = structuredClone(app.store.config.voiceProfiles);
+  app.store.change((c) => {
+    c.characters = [
+      old,
+      {
+        ...structuredClone(old),
+        id: "companion",
+        displayName: "相棒",
+        bindings: [{ ...source, speakerId: "companion" }],
+      },
+    ];
+  });
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  const pages = await Promise.all(contexts.map((c) => c.newPage()));
+  try {
+    for (const p of pages) {
+      await p.goto(invite);
+      await expect(p.locator("#characters .list-item")).toHaveCount(2);
+    }
+    const row = pages[0]
+      .locator("#characters .list-item")
+      .filter({ has: pages[0].locator("strong", { hasText: "メリッサ" }) });
+    pages[0].once("dialog", (d) => d.dismiss());
+    await row.getByRole("button", { name: "削除", exact: true }).click();
+    expect(app.store.config.characters).toHaveLength(2);
+    pages[0].once("dialog", async (d) => {
+      expect(d.message()).toContain("共有している声設定は残ります");
+      await d.accept();
+    });
+    await row.getByRole("button", { name: "削除", exact: true }).click();
+    for (const p of pages) {
+      await expect(p.locator("#characters .list-item")).toHaveCount(1);
+      await expect(p.locator("#characters strong")).toHaveText("相棒");
+    }
+    expect(app.store.config.voiceProfiles).toEqual(voices);
+    expect(app.store.config.characters[0].voiceProfileId).toBe(
+      old.voiceProfileId,
+    );
+    expect(post("rediscover-after-delete").status).toBe("ignored");
+    for (const p of pages)
+      await expect(p.locator("#characters .list-item")).toHaveCount(2);
+    const rediscovered = app.store.config.characters.find(
+      (c) => c.id !== "companion",
+    );
+    expect(rediscovered.id).not.toBe(old.id);
+    expect(rediscovered.voiceProfileId).toBeNull();
+    await row.getByRole("button", { name: "声を選ぶ" }).click();
+    await expect(
+      pages[0]
+        .locator("select[name=voice] option")
+        .filter({ hasText: "メリッサ" }),
+    ).toHaveCount(1);
+  } finally {
+    for (const c of contexts) await c.close();
+  }
+});
 test("management startup link, simplified controls and reset confirmation", async ({
   page,
 }) => {

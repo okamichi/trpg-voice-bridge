@@ -1,3 +1,4 @@
+import { randomUUID } from "./uuid.js";
 const $ = (id) => document.getElementById(id);
 let room,
   data,
@@ -24,7 +25,7 @@ async function request(path, method = "GET", body) {
     method,
     headers: {
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": randomUUID(),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -68,6 +69,10 @@ export async function refreshCharacters(roomId = room) {
       const button = document.createElement("button");
       button.textContent = ch.voiceProfileId ? "試聴・変更" : "声を選ぶ";
       button.onclick = () => edit(ch);
+      const removeButton = document.createElement("button");
+      removeButton.textContent = "削除";
+      removeButton.className = "danger";
+      removeButton.onclick = () => remove(ch, removeButton);
       row.append(
         name,
         " ",
@@ -76,11 +81,31 @@ export async function refreshCharacters(roomId = room) {
         info,
         document.createElement("br"),
         button,
+        removeButton,
       );
       list.append(row);
     }
   } catch (e) {
     $("characterStatus").textContent = e.message;
+  }
+}
+async function remove(ch, button) {
+  if (
+    !confirm(
+      `「${ch.displayName}」のキャラ登録を削除しますか？\n共有している声設定は残ります。次にVTTで発言すると再登録されます。`,
+    )
+  )
+    return;
+  button.disabled = true;
+  try {
+    await request(`characters/${ch.id}`, "DELETE", { before: ch });
+    $("characterStatus").textContent =
+      `「${ch.displayName}」のキャラ登録を削除しました。声設定は残っています。`;
+    await refreshCharacters();
+  } catch (e) {
+    $("characterStatus").textContent = e.message;
+  } finally {
+    button.disabled = false;
   }
 }
 function loadVoice() {

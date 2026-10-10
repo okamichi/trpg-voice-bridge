@@ -8,7 +8,7 @@ import { Store, initialConfig } from "./store.mjs";
 import { Engine } from "./engine.mjs";
 import { createApp } from "./http.mjs";
 import { mockWav, inspectWav, payload } from "./provider.mjs";
-import { saveCharacter } from "./character-settings.mjs";
+import { saveCharacter, removeCharacter } from "./character-settings.mjs";
 import { resolveCharacter } from "./contracts.mjs";
 import { Playback } from "../web/playback.js";
 const fixtureSource = {
@@ -258,12 +258,20 @@ test("character deletion discards late result and queued audio", async (t) => {
   });
   store.config.provider.type = "irodori";
   engine.ingress(event(engine), "one");
+  engine.ingress(event(engine, "two"), "one");
   const before = structuredClone(store.config);
-  store.config.characters = [];
+  removeCharacter(store, before.characters[0].id, {
+    before: before.characters[0],
+  });
   engine.configChanged(before);
   release();
   await idle(engine);
   assert.equal(engine.audio.size, 0);
+  assert.deepEqual(store.config.voiceProfiles, before.voiceProfiles);
+  assert.deepEqual(
+    [...engine.orders.values()].map((o) => o.status),
+    ["cancelled", "cancelled"],
+  );
   assert.equal(engine.history.at(-1).type, "order.skipped");
 });
 test("failure lets next order advance; timeout requires explicit recovery", async (t) => {
@@ -357,6 +365,105 @@ async function httpApp(t) {
 function randomId() {
   return Math.random().toString(36).slice(2);
 }
+test("Player deletion preserves shared voices, rejects stale edits and allows rediscovery", async (t) => {
+  const a = await httpApp(t);
+  const character = structuredClone(a.store.config.characters[0]);
+  const other = {
+    ...structuredClone(character),
+    id: "companion",
+    displayName: "相棒",
+    bindings: [{ ...fixtureSource, speakerId: "companion" }],
+  };
+  a.store.change((c) => c.characters.push(other));
+  const voices = structuredClone(a.store.config.voiceProfiles);
+  const path = `/api/v1/rooms/campaign-01/characters/${character.id}`;
+  assert.equal(
+    (await a.call(path, "DELETE", { before: character }, null)).status,
+    401,
+  );
+  const invitation = await (
+    await a.call("/api/v1/admin/commands", "POST", {
+      command: "invite",
+      commandId: "delete-invite",
+    })
+  ).json();
+  const joined = await a.call(
+    "/api/v1/join",
+    "POST",
+    { invite: new URL(invitation.url).hash.slice(8) },
+    null,
+  );
+  const headers = {
+    Cookie: joined.headers.get("set-cookie").split(";")[0],
+    "Idempotency-Key": "delete-character",
+  };
+  assert.equal(
+    (
+      await a.call(path, "DELETE", { before: character }, null, {
+        ...headers,
+        Origin: "https://evil.test",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await a.call(
+        path.replace("campaign-01", "another"),
+        "DELETE",
+        { before: character },
+        null,
+        headers,
+      )
+    ).status,
+    403,
+  );
+  const stale = await a.call(
+    path,
+    "DELETE",
+    { before: { ...character, displayName: "古い名前" } },
+    null,
+    { ...headers, "Idempotency-Key": "stale-delete" },
+  );
+  assert.equal(stale.status, 409);
+  assert.equal(a.store.config.characters.length, 2);
+  assert.equal(
+    (await a.call(path, "DELETE", { before: character }, null, headers)).status,
+    200,
+  );
+  // A retried DELETE with the same operation key must not remove anything else.
+  assert.equal(
+    (await a.call(path, "DELETE", { before: character }, null, headers)).status,
+    200,
+  );
+  assert.deepEqual(a.store.config.characters, [other]);
+  assert.deepEqual(a.store.config.voiceProfiles, voices);
+  assert.deepEqual(a.store.read().characters, [other]);
+  assert.equal(
+    (
+      await a.call(
+        path,
+        "PATCH",
+        { before: character, value: { displayName: "復活" } },
+        null,
+        headers,
+      )
+    ).status,
+    404,
+  );
+
+  a.engine.connect({ source: fixtureSource, collectorId: "one" });
+  a.engine.accepting = true;
+  assert.equal(
+    a.engine.ingress(event(a.engine, "rediscover"), "one").status,
+    "ignored",
+  );
+  const restored = a.store.config.characters.find((c) => c.id !== other.id);
+  assert.notEqual(restored.id, character.id);
+  assert.equal(restored.voiceProfileId, null);
+  assert.deepEqual(restored.bindings, character.bindings);
+  assert.deepEqual(a.store.config.voiceProfiles, voices);
+});
 test("HTTP roles, invite cookie, room isolation, CRUD and idempotency", async (t) => {
   const a = await httpApp(t);
   assert.equal(
