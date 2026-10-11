@@ -78,6 +78,18 @@
         </p>
       </section>
       <section>
+        <h2 id="deliveryCaptionHeading">感情・演技の指定方法</h2>
+        <select id="deliveryCaptionMode" aria-labelledby="deliveryCaptionHeading">
+          <option value="append">声の説明に追記型</option>
+          <option value="prepend">声の説明より前に</option>
+          <option value="replace">声の説明と置換（参照音声登録時）</option>
+        </select>
+        <p class="muted">
+          発言内の中カッコ内で指定した感情・演技の説明を、TTSサーバへ送信する際に、Playerが設定した声の説明(caption)の後ろに追加するか、前に追加するか、置き換えるかを選びます。
+          感情や演技の指定を行う際に、効果がなければ変更してみてください。次のセリフから反映します。
+        </p>
+      </section>
+      <section>
         <h2>接続・セッション</h2>
         <button id="renewInvite">参加URLを再発行</button>
         <button id="releaseCollector">Collectorの接続を解除</button>

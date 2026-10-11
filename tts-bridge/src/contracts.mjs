@@ -8,6 +8,7 @@ export class HttpError extends Error {
 export function check(ok, message, status = 422) {
   if (!ok) throw new HttpError(status, message);
 }
+export const DELIVERY_CAPTION_MODES = ["append", "prepend", "replace"];
 export const str = (x, max = 200) =>
   typeof x === "string" && x.length > 0 && x.length <= max;
 export const id = (x) => str(x, 120) && /^[\w.-]+$/.test(x);
@@ -143,6 +144,11 @@ export function configSchema(c) {
     "発言種別が不正です",
   );
   check(typeof c.publishTextToPlayers === "boolean", "字幕設定が不正です");
+  check(
+    c.deliveryCaptionMode === undefined ||
+      DELIVERY_CAPTION_MODES.includes(c.deliveryCaptionMode),
+    "感情・演技の指定方法が不正です",
+  );
   check(
     c.sentencePauseMs === undefined ||
       (Number.isInteger(c.sentencePauseMs) &&

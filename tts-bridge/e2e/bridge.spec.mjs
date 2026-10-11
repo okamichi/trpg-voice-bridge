@@ -301,6 +301,42 @@ test("Player deletes only a character registration; shared voices survive and ne
     for (const c of contexts) await c.close();
   }
 });
+test("admin delivery caption mode selection persists and reports stale changes", async ({
+  page,
+}) => {
+  await page.goto(app.adminUrl());
+  const mode = page.getByRole("combobox", {
+    name: "感情・演技の指定方法",
+    exact: true,
+  });
+  await expect(mode).toBeHidden();
+  await page.getByText("詳細設定", { exact: true }).click();
+  await expect(mode).toHaveValue("append");
+  await expect(mode.locator("option")).toHaveText([
+    "声の説明に追記型",
+    "声の説明より前に",
+    "声の説明と置換（参照音声登録時）",
+  ]);
+  for (const value of ["prepend", "replace", "append"]) {
+    await mode.selectOption(value);
+    await expect(mode).toBeEnabled();
+    await expect.poll(() => app.store.config.deliveryCaptionMode).toBe(value);
+    await page.reload();
+    await page.getByText("詳細設定", { exact: true }).click();
+    await expect(mode).toHaveValue(value);
+  }
+  await admin("delivery", "PUT", {
+    before: "append",
+    deliveryCaptionMode: "replace",
+  });
+  await mode.selectOption("prepend");
+  await expect(page.locator("#notice")).toContainText("他の人が変更しています");
+  await expect(mode).toHaveValue("append");
+  expect(app.store.config.deliveryCaptionMode).toBe("replace");
+  await page.reload();
+  await page.getByText("詳細設定", { exact: true }).click();
+  await expect(mode).toHaveValue("replace");
+});
 test("management startup link, simplified controls and reset confirmation", async ({
   page,
 }) => {

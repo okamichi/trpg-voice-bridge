@@ -366,6 +366,139 @@ async function httpApp(t) {
 function randomId() {
   return Math.random().toString(36).slice(2);
 }
+test("delivery caption modes preserve voice identity, plain speech and native cues", () => {
+  const voice = { ...config().voiceProfiles[0], caption: "元気な男の子" };
+  const provider = config().provider;
+  const instruction = "この発言の演技指示: 演技: 怯えながら囁く。";
+  const text = "（演技:怯えながら囁く）誰かいるの？";
+  for (const voiceId of [
+    "child-ref",
+    "none",
+    "None",
+    "no_ref",
+    "no-ref",
+    "null",
+    "text-only",
+  ]) {
+    const v = { ...voice, voiceId };
+    const baseline = JSON.parse(payload(text, v, provider));
+    for (const mode of ["append", "prepend", "replace"]) {
+      const expected =
+        mode === "prepend"
+          ? `${instruction}。${v.caption}`
+          : mode === "replace" && voiceId === "child-ref"
+            ? instruction
+            : `${v.caption}。${instruction}`;
+      const actual = JSON.parse(payload(text, v, provider, mode));
+      assert.deepEqual(actual, {
+        ...baseline,
+        irodori: { ...baseline.irodori, caption: expected },
+      });
+      assert.equal(actual.input, "誰かいるの？");
+      assert.equal(
+        JSON.parse(payload("誰かいるの？", v, provider, mode)).irodori.caption,
+        v.caption,
+      );
+      const native = JSON.parse(
+        payload("（囁き）誰かいるの？", v, provider, mode),
+      );
+      assert.equal(native.input, "👂誰かいるの？");
+      assert.equal(native.irodori.caption, v.caption);
+    }
+  }
+});
+test("admin delivery mode validates, detects conflicts, persists and supports old config", async (t) => {
+  const a = await httpApp(t);
+  const put = (b, role = "admin") =>
+    a.call("/api/v1/admin/delivery", "PUT", b, role);
+  assert.equal(a.store.config.deliveryCaptionMode, "append");
+  a.store.change((c) => {
+    delete c.deliveryCaptionMode;
+  });
+  assert.equal(
+    (
+      await put(
+        { before: "append", deliveryCaptionMode: "prepend" },
+        "collector",
+      )
+    ).status,
+    401,
+  );
+  for (const deliveryCaptionMode of [null, "unknown", 1]) {
+    assert.equal(
+      (await put({ before: "append", deliveryCaptionMode })).status,
+      422,
+    );
+    assert.equal(a.store.config.deliveryCaptionMode, undefined);
+  }
+  assert.equal(
+    (await put({ before: "replace", deliveryCaptionMode: "prepend" })).status,
+    409,
+  );
+  assert.equal((await put({ deliveryCaptionMode: "prepend" })).status, 409);
+  let before = "append";
+  for (const deliveryCaptionMode of ["prepend", "replace", "append"]) {
+    const ok = await put({ before, deliveryCaptionMode });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { deliveryCaptionMode });
+    before = deliveryCaptionMode;
+  }
+  await put({ before, deliveryCaptionMode: "replace" });
+  const reopened = new Store(a.store.dir, config());
+  t.after(() => reopened.close());
+  assert.equal(reopened.config.deliveryCaptionMode, "replace");
+  assert.throws(
+    () =>
+      a.store.change((c) => {
+        c.deliveryCaptionMode = "invalid";
+      }),
+    { status: 422 },
+  );
+  assert.equal(a.store.config.deliveryCaptionMode, "replace");
+});
+test("queued speech keeps its delivery mode and previews use the current mode", async (t) => {
+  const sent = [];
+  let release;
+  const gate = new Promise((r) => {
+    release = r;
+  });
+  t.after(() => release());
+  const { store, engine } = setup(t, {
+    fetchImpl: async (url, init) => {
+      sent.push(JSON.parse(init.body));
+      if (sent.length === 1) await gate;
+      return new Response(mockWav());
+    },
+  });
+  store.change((c) => {
+    c.provider.type = "irodori";
+    c.deliveryCaptionMode = "prepend";
+    c.voiceProfiles[0].voiceId = "child-ref";
+    c.voiceProfiles[0].caption = "元気な男の子";
+  });
+  const text = "（感情:不安そうに）だいじょうぶ。";
+  engine.ingress(event(engine, "first", text), "one");
+  engine.ingress(event(engine, "queued", text), "one");
+  store.change((c) => {
+    c.deliveryCaptionMode = "replace";
+  });
+  const preview = engine.preview(text, store.config.voiceProfiles[0]);
+  engine.ingress(event(engine, "next", text), "one");
+  release();
+  await preview;
+  await idle(engine);
+  const instruction = "この発言の演技指示: 感情: 不安そうに。";
+  assert.deepEqual(
+    sent.map((r) => r.irodori.caption),
+    [
+      `${instruction}。元気な男の子`,
+      `${instruction}。元気な男の子`,
+      instruction,
+      instruction,
+    ],
+  );
+  assert.equal(store.config.voiceProfiles[0].caption, "元気な男の子");
+});
 test("Player deletion preserves shared voices, rejects stale edits and allows rediscovery", async (t) => {
   const a = await httpApp(t);
   const character = structuredClone(a.store.config.characters[0]);
@@ -1211,6 +1344,7 @@ test("long messages split at sentence ends; free acting cues reach every sentenc
 
 test("each sentence becomes its own order, ready and published in order", async (t) => {
   const { engine, store } = setup(t);
+  store.config.sentenceSplitThresholdChars = 1;
   const sent = [];
   store.config.provider.type = "irodori";
   engine.options.fetchImpl = async (url, init) => {
@@ -1274,6 +1408,7 @@ test("each sentence becomes its own order, ready and published in order", async 
 
 test("stopping cancels the sentences not yet made; the queue counts messages", async (t) => {
   const { engine, store } = setup(t);
+  store.config.sentenceSplitThresholdChars = 1;
   let release;
   store.config.provider.type = "irodori";
   engine.options.fetchImpl = () =>
@@ -1298,6 +1433,9 @@ test("stopping cancels the sentences not yet made; the queue counts messages", a
 
 test("admin sets the pause between sentences with conflict detection", async (t) => {
   const a = await httpApp(t);
+  a.store.change((c) => {
+    c.sentenceSplitThresholdChars = 1;
+  });
   const put = (b, role = "admin") =>
     a.call("/api/v1/admin/playback", "PUT", b, role);
   assert.equal(a.store.config.sentencePauseMs, 900);

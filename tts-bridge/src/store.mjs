@@ -208,6 +208,7 @@ export function initialConfig(profiles) {
     allowedChannels: ["main"],
     allowedKinds: ["dialogue"],
     publishTextToPlayers: true,
+    deliveryCaptionMode: "append",
     sentencePauseMs: 900,
     sentenceSplitThresholdChars: DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS,
     provider: {

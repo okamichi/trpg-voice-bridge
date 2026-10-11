@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let accepting = false,
   provider,
+  deliveryCaptionMode,
   publishText,
   sentencePauseMs,
   sentenceSplitThresholdChars;
@@ -122,6 +123,23 @@ $("publishText").onchange = () =>
       $("publishText").checked = publishText;
     }
   });
+$("deliveryCaptionMode").onchange = () =>
+  run(async () => {
+    const wanted = $("deliveryCaptionMode").value;
+    $("deliveryCaptionMode").disabled = true;
+    try {
+      deliveryCaptionMode = (
+        await api("delivery", "PUT", {
+          before: deliveryCaptionMode,
+          deliveryCaptionMode: wanted,
+        })
+      ).deliveryCaptionMode;
+      $("notice").textContent = "感情・演技の指定方法を保存しました。";
+    } finally {
+      $("deliveryCaptionMode").value = deliveryCaptionMode;
+      $("deliveryCaptionMode").disabled = false;
+    }
+  });
 $("sentenceSplitThreshold").onchange = () =>
   run(async () => {
     const wanted = Number($("sentenceSplitThreshold").value);
@@ -216,10 +234,12 @@ await run(async () => {
   }
   const config = await api("config");
   provider = config.provider;
+  deliveryCaptionMode = config.deliveryCaptionMode ?? "append";
   publishText = config.publishTextToPlayers;
   sentencePauseMs = config.sentencePauseMs ?? 900;
   sentenceSplitThresholdChars = config.sentenceSplitThresholdChars ?? 150;
   $("providerUrl").value = provider.baseUrl;
+  $("deliveryCaptionMode").value = deliveryCaptionMode;
   $("publishText").checked = publishText;
   $("sentencePause").value = sentencePauseMs / 1000;
   $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;

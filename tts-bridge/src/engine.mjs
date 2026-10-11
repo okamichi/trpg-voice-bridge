@@ -235,7 +235,10 @@ export class Engine extends EventEmitter {
       };
     let parts;
     try {
-      parts = splitLongUtterance(e.text, this.config.sentenceSplitThresholdChars);
+      parts = splitLongUtterance(
+        e.text,
+        this.config.sentenceSplitThresholdChars,
+      );
     } catch {
       parts = [{ text: e.text, display: e.text.trim() }];
     }
@@ -267,6 +270,7 @@ export class Engine extends EventEmitter {
           epoch: this.playbackEpoch,
           voice: structuredClone(voice),
           provider: structuredClone(this.config.provider),
+          deliveryCaptionMode: this.config.deliveryCaptionMode ?? "append",
           groupId: orderId,
           part,
           parts: parts.length,
@@ -384,7 +388,10 @@ export class Engine extends EventEmitter {
       if (o.preview) {
         if (Date.now() - o.created > 180000)
           throw new Error("試聴待機の期限切れ");
-        const wav = await synthesize(o.text, o.voice, o.provider, this.options);
+        const wav = await synthesize(o.text, o.voice, o.provider, {
+          ...this.options,
+          deliveryCaptionMode: o.deliveryCaptionMode,
+        });
         inspectWav(wav);
         o.resolve(wav);
         return;
@@ -399,7 +406,10 @@ export class Engine extends EventEmitter {
       check(!o.reuseAudioId || a, "再生音声が期限切れです", 409);
       if (!a) {
         const start = performance.now();
-        const wav = await synthesize(o.text, o.voice, o.provider, this.options);
+        const wav = await synthesize(o.text, o.voice, o.provider, {
+          ...this.options,
+          deliveryCaptionMode: o.deliveryCaptionMode,
+        });
         o.generationMs = performance.now() - start;
         if (
           this.closed ||
@@ -461,6 +471,7 @@ export class Engine extends EventEmitter {
         text,
         voice,
         provider: structuredClone(this.config.provider),
+        deliveryCaptionMode: this.config.deliveryCaptionMode ?? "append",
         created: Date.now(),
         resolve,
         reject,

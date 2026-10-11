@@ -1,6 +1,6 @@
 import { readLimited } from "../synthesis.mjs";
 import { parseDelivery } from "../delivery.mjs";
-import { check, voiceSchema } from "./contracts.mjs";
+import { check, voiceSchema, DELIVERY_CAPTION_MODES } from "./contracts.mjs";
 export const AUDIO_LIMIT = 25 * 1024 * 1024;
 export function inspectWav(b) {
   check(
@@ -58,15 +58,32 @@ export function inspectWav(b) {
     mediaType: "audio/wav",
   };
 }
-export function payload(text, v, p) {
+export function payload(text, v, p, deliveryCaptionMode = "append") {
   voiceSchema(v);
+  check(
+    DELIVERY_CAPTION_MODES.includes(deliveryCaptionMode),
+    "感情・演技の指定方法が不正です",
+  );
   const delivery = parseDelivery(text);
-  const caption = [
-    v.caption,
-    delivery.caption ? `この発言の演技指示: ${delivery.caption}。` : "",
-  ]
-    .filter(Boolean)
-    .join("。");
+  const instruction = delivery.caption
+    ? `この発言の演技指示: ${delivery.caption}。`
+    : "";
+  const hasReference = ![
+    "none",
+    "no_ref",
+    "no-ref",
+    "null",
+    "text-only",
+  ].includes(v.voiceId.toLowerCase());
+  const caption =
+    instruction && deliveryCaptionMode === "replace" && hasReference
+      ? instruction
+      : (deliveryCaptionMode === "prepend"
+          ? [instruction, v.caption]
+          : [v.caption, instruction]
+        )
+          .filter(Boolean)
+          .join("。");
   check(caption.length <= 1000, "演技指示込みのcaptionは1000文字までです");
   const irodori = {
     caption,
@@ -120,13 +137,17 @@ export async function synthesize(
   text,
   voice,
   provider,
-  { fetchImpl = fetch, timeoutMs = 120000 } = {},
+  {
+    fetchImpl = fetch,
+    timeoutMs = 120000,
+    deliveryCaptionMode = "append",
+  } = {},
 ) {
   if (provider.type === "mock") return mockWav();
   const response = await fetchImpl(`${provider.baseUrl}/v1/audio/speech`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: payload(text, voice, provider),
+    body: payload(text, voice, provider, deliveryCaptionMode),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {

@@ -4,6 +4,7 @@
   "allowedChannels": ["main"],
   "allowedKinds": ["dialogue"],
   "publishTextToPlayers": true,
+  "deliveryCaptionMode": "append",
   "sentencePauseMs": 900,
   "sentenceSplitThresholdChars": 150,
   "provider": {

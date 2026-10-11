@@ -16,6 +16,7 @@ import {
   hash,
   voiceSchema,
   sourceKey,
+  DELIVERY_CAPTION_MODES,
 } from "./contracts.mjs";
 const webRoot = new URL("../web/", import.meta.url);
 const equal = (a, b) => {
@@ -345,6 +346,20 @@ export function createApp({
         admin(req);
         if (path === "/api/v1/admin/config" && method === "GET")
           return json(res, 200, store.config);
+        if (path === "/api/v1/admin/delivery" && method === "PUT") {
+          const b = await body(req);
+          check(
+            DELIVERY_CAPTION_MODES.includes(b.deliveryCaptionMode),
+            "感情・演技の指定方法が不正です",
+          );
+          store.change((c) => {
+            store.compare(c.deliveryCaptionMode ?? "append", b.before);
+            c.deliveryCaptionMode = b.deliveryCaptionMode;
+          });
+          return json(res, 200, {
+            deliveryCaptionMode: store.config.deliveryCaptionMode,
+          });
+        }
         if (path === "/api/v1/admin/provider" && method === "PUT") {
           const b = await body(req);
           store.change((c) => {
@@ -368,7 +383,8 @@ export function createApp({
             c.sentenceSplitThresholdChars = b.sentenceSplitThresholdChars;
           });
           return json(res, 200, {
-            sentenceSplitThresholdChars: store.config.sentenceSplitThresholdChars,
+            sentenceSplitThresholdChars:
+              store.config.sentenceSplitThresholdChars,
           });
         }
         if (path === "/api/v1/admin/playback" && method === "PUT") {
