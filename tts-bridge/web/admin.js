@@ -2,7 +2,8 @@ const $ = (id) => document.getElementById(id);
 let accepting = false,
   provider,
   publishText,
-  sentencePauseMs;
+  sentencePauseMs,
+  sentenceSplitThresholdChars;
 async function api(path, method = "GET", body) {
   const r = await fetch(`/api/v1/admin/${path}`, {
     method,
@@ -121,6 +122,24 @@ $("publishText").onchange = () =>
       $("publishText").checked = publishText;
     }
   });
+$("sentenceSplitThreshold").onchange = () =>
+  run(async () => {
+    const wanted = Number($("sentenceSplitThreshold").value);
+    try {
+      if (!Number.isInteger(wanted) || wanted < 1 || wanted > 500)
+        throw new Error("文の分割しきい値は1～500文字で指定してください");
+      sentenceSplitThresholdChars = (
+        await api("splitting", "PUT", {
+          before: sentenceSplitThresholdChars,
+          sentenceSplitThresholdChars: wanted,
+        })
+      ).sentenceSplitThresholdChars;
+      $("notice").textContent =
+        `本文が${sentenceSplitThresholdChars}文字を超えるセリフだけ分割します。`;
+    } finally {
+      $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
+    }
+  });
 $("sentencePause").onchange = () =>
   run(async () => {
     const wanted = Math.round(Number($("sentencePause").value) * 1000);
@@ -199,9 +218,11 @@ await run(async () => {
   provider = config.provider;
   publishText = config.publishTextToPlayers;
   sentencePauseMs = config.sentencePauseMs ?? 900;
+  sentenceSplitThresholdChars = config.sentenceSplitThresholdChars ?? 150;
   $("providerUrl").value = provider.baseUrl;
   $("publishText").checked = publishText;
   $("sentencePause").value = sentencePauseMs / 1000;
+  $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
   await refresh();
   setInterval(() => run(refresh), 5000);
 });

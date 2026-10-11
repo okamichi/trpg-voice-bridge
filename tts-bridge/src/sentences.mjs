@@ -1,6 +1,28 @@
 import { DELIVERY_EMOJI, parseDelivery } from "../delivery.mjs";
 
 export const MAX_PARTS = 10;
+export const DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS = 150;
+const graphemes = new Intl.Segmenter("ja", { granularity: "grapheme" });
+const EMOJI = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u;
+
+// Count visible body characters; acting cues and whole emoji sequences do not
+// consume the threshold. Ordinary parentheses, punctuation and spaces count.
+export function utteranceBodyLength(source) {
+  const input = parseDelivery(source).input;
+  let length = 0;
+  for (const { segment } of graphemes.segment(input))
+    if (!EMOJI.test(segment)) length++;
+  return length;
+}
+
+export function splitLongUtterance(
+  source,
+  thresholdChars = DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS,
+) {
+  if (utteranceBodyLength(source) <= thresholdChars)
+    return [{ text: source, display: source.trim() }];
+  return splitUtterance(source);
+}
 const END = new Set(["。", "！", "？", "!", "?", "\n"]);
 // Closing marks and repeated ends stay with the sentence they close.
 const TRAILING = new Set([

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
+import { DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS } from "./sentences.mjs";
 import {
   check,
   configSchema,
@@ -208,6 +209,7 @@ export function initialConfig(profiles) {
     allowedKinds: ["dialogue"],
     publishTextToPlayers: true,
     sentencePauseMs: 900,
+    sentenceSplitThresholdChars: DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS,
     provider: {
       type: "irodori",
       baseUrl: "http://127.0.0.1:8088",

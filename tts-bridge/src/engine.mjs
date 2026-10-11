@@ -17,7 +17,7 @@ import {
   sourceKey,
 } from "./contracts.mjs";
 import { synthesize, inspectWav, AUDIO_LIMIT } from "./provider.mjs";
-import { splitUtterance } from "./sentences.mjs";
+import { splitLongUtterance } from "./sentences.mjs";
 export const DEFAULT_SENTENCE_PAUSE_MS = 900;
 export class Engine extends EventEmitter {
   constructor(store, options = {}) {
@@ -235,7 +235,7 @@ export class Engine extends EventEmitter {
       };
     let parts;
     try {
-      parts = splitUtterance(e.text);
+      parts = splitLongUtterance(e.text, this.config.sentenceSplitThresholdChars);
     } catch {
       parts = [{ text: e.text, display: e.text.trim() }];
     }

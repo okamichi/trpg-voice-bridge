@@ -151,6 +151,13 @@ export function configSchema(c) {
     "文の間は0～3000ミリ秒です",
   );
   check(
+    c.sentenceSplitThresholdChars === undefined ||
+      (Number.isInteger(c.sentenceSplitThresholdChars) &&
+        c.sentenceSplitThresholdChars >= 1 &&
+        c.sentenceSplitThresholdChars <= 500),
+    "文の分割しきい値は1～500文字です",
+  );
+  check(
     c.provider &&
       typeof c.provider.baseUrl === "string" &&
       URL.canParse(c.provider.baseUrl),

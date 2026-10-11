@@ -5,6 +5,7 @@
   "allowedKinds": ["dialogue"],
   "publishTextToPlayers": true,
   "sentencePauseMs": 900,
+  "sentenceSplitThresholdChars": 150,
   "provider": {
     "type": "irodori",
     "baseUrl": "http://127.0.0.1:8088",

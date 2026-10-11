@@ -9,6 +9,7 @@ import {
   removeCharacter,
 } from "./character-settings.mjs";
 import { Engine, DEFAULT_SENTENCE_PAUSE_MS } from "./engine.mjs";
+import { DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS } from "./sentences.mjs";
 import {
   check,
   HttpError,
@@ -351,6 +352,24 @@ export function createApp({
             c.provider.baseUrl = b.baseUrl;
           });
           return json(res, 200, store.config.provider);
+        }
+        if (path === "/api/v1/admin/splitting" && method === "PUT") {
+          const b = await body(req);
+          check(
+            Number.isInteger(b.sentenceSplitThresholdChars),
+            "文の分割しきい値は1～500文字です",
+          );
+          store.change((c) => {
+            store.compare(
+              c.sentenceSplitThresholdChars ??
+                DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS,
+              b.before,
+            );
+            c.sentenceSplitThresholdChars = b.sentenceSplitThresholdChars;
+          });
+          return json(res, 200, {
+            sentenceSplitThresholdChars: store.config.sentenceSplitThresholdChars,
+          });
         }
         if (path === "/api/v1/admin/playback" && method === "PUT") {
           const b = await body(req);
