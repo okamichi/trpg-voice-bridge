@@ -118,6 +118,10 @@ test("3 independent players hear 10 ordered messages once; reload ignores old wo
 test("a message of several sentences plays sentence by sentence, logged one per line", async ({
   page,
 }) => {
+  // This case explicitly exercises splitting rather than the 150-character default.
+  app.store.change((config) => {
+    config.sentenceSplitThresholdChars = 1;
+  });
   await observe(page);
   await page.goto(invite);
   await expect(page.locator("#status")).toContainText("接続しました");
@@ -446,7 +450,7 @@ test("FVTT injected adapter excludes whisper, blind, OOC, rolls and secrets; no 
     "createChatMessage",
   ]);
 });
-test("unverified Udonarium and CCFOLIA stop without transmitting chat text", async ({
+test("unreadable Udonarium and CCFOLIA stop without transmitting chat text", async ({
   page,
 }) => {
   for (const adapter of ["udonarium", "ccfolia"]) {

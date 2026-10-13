@@ -373,8 +373,83 @@
       "ユドナリウム実験用 / 全員公開タブの新規キャラ発言のみ / キャラIDを使用。公開ビルド未検証",
     );
   } else if (settings.adapter === "ccfolia") {
-    fail(
-      "ココフォリア: 元発言ID・公開/秘匿/グループ範囲・新着判定の実機検証待ちです。本文は送信していません",
-    );
+    try {
+      const api = globalThis.__trpgCcfolia;
+      if (!api)
+        throw new Error(
+          "ココフォリアの取得処理を読み込めません。拡張を再読み込みしてください",
+        );
+      const initial = api.inspect();
+      const target = settings.channel || "main";
+      if (
+        initial.contextId !== settings.contextId ||
+        !initial.channels.some((c) => c.id === target)
+      )
+        throw new Error(
+          "ココフォリアの対象の部屋または公開タブを確認できません",
+        );
+      let previous = initial.messages;
+      for (const id of Object.keys(initial.messages)) seen.add(id);
+      if (seen.size > 20000)
+        throw new Error("発言数の上限に達しました。再接続してください");
+      const scan = () => {
+        if (stopped) return;
+        try {
+          if (api.store() !== initial.store)
+            throw new Error(
+              "ココフォリアの画面が変わりました。再接続してください",
+            );
+          const current = api.inspect(initial.store);
+          if (
+            current.contextId !== settings.contextId ||
+            !current.channels.some((c) => c.id === target)
+          )
+            throw new Error(
+              "ココフォリアの対象タブが公開ではありません。取得を停止しました",
+            );
+          if (previous === current.messages) return;
+          if (Object.keys(current.messages).length > 20000)
+            throw new Error("発言数の上限に達しました。再接続してください");
+          previous = current.messages;
+          for (const [id, message] of Object.entries(current.messages)) {
+            if (seen.has(id)) continue;
+            if (message?._id !== id || typeof message.channel !== "string")
+              throw new Error("ココフォリアの発言IDまたはタブを確認できません");
+            if (message.channel !== target) continue;
+            const time = api.timestamp(message.createdAt);
+            if (time === null) continue;
+            const data = time > connectedAt ? api.dialogue(message) : null;
+            if (!data) {
+              seen.add(id);
+              if (seen.size > 20000)
+                throw new Error("発言数の上限に達しました。再接続してください");
+              continue;
+            }
+            send({
+              ...data,
+              messageId: id,
+              contextId: settings.contextId,
+              occurredAt: new Date(time).toISOString(),
+              channel: "main",
+            });
+            if (stopped) return;
+          }
+        } catch (e) {
+          fail(e.message);
+        }
+      };
+      const unsubscribe = initial.store.subscribe(scan);
+      const timer = setInterval(scan, 1000);
+      cleanup = () => {
+        unsubscribe();
+        clearInterval(timer);
+      };
+      ready(
+        `ココフォリア / ${initial.channels.find((c) => c.id === target).name} / 新規公開発言のみ / ダイス結果は読みません`,
+      );
+      scan();
+    } catch (e) {
+      fail(e.message);
+    }
   } else fail("未対応のツールです");
 })();

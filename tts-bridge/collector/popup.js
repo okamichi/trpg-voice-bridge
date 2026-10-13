@@ -55,7 +55,7 @@ async function detect() {
     if (sequence !== detectSequence) return;
     detected = result;
     document.getElementById("detected").textContent =
-      `${detected.adapter === "fvtt" ? "FVTT" : detected.variant === "fly" ? "ユドナリウム with Fly" : "ユドナリウム"} / ${detected.contextId || "部屋の識別名を入力してください"}`;
+      `${detected.adapter === "fvtt" ? "FVTT" : detected.adapter === "ccfolia" ? "ココフォリア" : detected.variant === "fly" ? "ユドナリウム with Fly" : "ユドナリウム"} / ${detected.contextId || "部屋の識別名を入力してください"}`;
     form.elements.contextId.value =
       detected.contextId ||
       form.elements.contextId.value ||
@@ -69,7 +69,10 @@ async function detect() {
     for (const c of detected.channels ?? []) {
       const option = document.createElement("option");
       option.value = c.id;
-      option.textContent = `${c.name || "無名のタブ"} (${c.id})`;
+      option.textContent =
+        detected.adapter === "ccfolia"
+          ? c.name || "無名のタブ"
+          : `${c.name || "無名のタブ"} (${c.id})`;
       choices.append(option);
     }
     choices.value = detected.channel || "";

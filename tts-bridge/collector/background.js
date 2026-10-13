@@ -135,6 +135,11 @@ async function connect(settings, tabId) {
   });
   await chrome.scripting.executeScript({
     target: { tabId },
+    files: ["ccfolia.js"],
+    world: "MAIN",
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
     files: ["page.js"],
     world: "MAIN",
   });
@@ -184,11 +189,20 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
     if (m.type === "detect") {
       if (sender.url !== chrome.runtime.getURL("popup.html"))
         throw new Error("ポップアップから操作してください");
-      if (!["auto", "fvtt", "udonarium", "fly"].includes(m.mode ?? "auto"))
+      if (
+        !["auto", "fvtt", "udonarium", "fly", "ccfolia"].includes(
+          m.mode ?? "auto",
+        )
+      )
         throw new Error("取得方式が不正です");
       await chrome.scripting.executeScript({
         target: { tabId: m.tabId },
         files: ["fly.js"],
+        world: "MAIN",
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId: m.tabId },
+        files: ["ccfolia.js"],
         world: "MAIN",
       });
       const [result] = await chrome.scripting.executeScript({
@@ -196,6 +210,24 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         world: "MAIN",
         args: [m.mode ?? "auto"],
         func: async (mode) => {
+          if (
+            mode === "ccfolia" ||
+            (mode === "auto" && location.hostname === "ccfolia.com")
+          ) {
+            try {
+              const { contextId, channels } =
+                globalThis.__trpgCcfolia.inspect();
+              return {
+                adapter: "ccfolia",
+                contextId,
+                channel: "main",
+                channels,
+                site: location.origin + "/rooms/" + contextId,
+              };
+            } catch (e) {
+              return { error: e.message };
+            }
+          }
           if (
             (mode === "auto" || mode === "fvtt") &&
             globalThis.game?.ready &&
