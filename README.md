@@ -14,6 +14,14 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者�
   - [起動・設定の詳細](tts-bridge/README.md)
   - [HTTPS公開設定例](docs/online.md)
 
+### TRPG-Voice-Bridge の紹介
+
+https://github.com/user-attachments/assets/74e42506-a4c7-4e89-82ac-1c70c314b8b4
+
+### クイックスタートガイド
+
+https://github.com/user-attachments/assets/3177fa79-9eaf-4c6e-ad0c-f957dc5ad51c
+
 ## Irodori-TTS-Server について
 
 音声の生成には[Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server)を使います。日本語音声合成モデル[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)を、OpenAIのText-to-Speech API互換で提供するサーバーです。Bridgeと同じマシンで`127.0.0.1:8088`に起動する構成を標準にしています（[Quick Start](quickstart.md)）。
