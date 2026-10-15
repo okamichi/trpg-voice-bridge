@@ -1,7 +1,5 @@
 # TRPG Voice Bridge
 
-Discord BotのWAV単体再生は実機で確認済みです（2026-10-15）。[Discord接続の手順・検証状況](discord/README.md)を参照してください。
-
 Node.js **22.13以上**。trpg-voice-bridgeは`main.mjs`で起動します。依存はWebSocketの`ws`、設定・認証・発言台帳の保存先はNode組込みSQLiteです。
 
 構成と音声担当者・参加者それぞれの操作は[セットアップガイド](../docs/setup-guide.md)を先に参照してください。Collectorは音声担当者用のブラウザ拡張です。GMでもPLの一人でも担当できます。コードは`collector/`に含まれ、ほかの参加者にはインストール不要です。
@@ -81,28 +79,3 @@ Playerは通知の順に1件ずつ取得・デコード・再生します。再�
 
 Irodoriのモデルや推論バックエンドはBridgeから変更しません。
 
-## 検証
-
-```sh
-npm test
-npx playwright install chromium
-npm run test:browser
-# 起動中Irodoriを使う実生成とPlayerへの配信試験
-TTS_REAL_E2E=1 npm run test:browser
-# Fly公開サイトのモデルで新着・公開範囲を検証（独立したテスト用ブラウザ）
-TTS_FLY_E2E=1 npx playwright test e2e/fly-production.spec.mjs
-# 2声設定と登録参照voiceでWAV生成、verification/に記録
-node tools/verify-real.mjs
-```
-
-ブラウザ試験は実Chromium上の独立した3コンテキストを使います。3台の物理端末や実VTTでの試験の代わりにはしません。
-
-## 既存Axe用bridge
-
-既存の`server.mjs`・`synthesis.mjs`・`delivery.mjs`とテストを維持しています。
-
-```sh
-TTS_BRIDGE_TOKEN=16文字以上の既存用トークン npm run start:legacy
-```
-
-従来どおり`/api/tts/health`、`profiles`、`voices`、`synthesize`を利用できます。`TTS_UPSTREAM`、`TTS_PROFILES`、`TTS_BRIDGE_PORT`も従来どおりです。新しい共通サービスに旧APIをマウントする互換入力はまだ追加していません。両方起動する場合はポートを分けてください。汎用bridge自体はサーバー側で自動再生しません。

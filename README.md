@@ -6,13 +6,13 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者�
 
 キャラの声はPlayerで全員が設定できます。Collectorの初回承認と読み上げ開始・停止は管理画面で行います。
 
-**ココフォリアにも対応しています。** 1.37.5の実部屋で、チャットの取得から音声生成・Playerでの再生まで確認済みです。対象チャットの初期値は「メイン」で、ほかの公開タブも名前で選べます。ダイスだけの発言は取得せず、ダイス付きのセリフはコマンドを除いた本文だけを読み上げ、結果は読みません。各VTTの対応状況は[セットアップガイド](docs/setup-guide.md#collectorとは)を参照してください。
+**基本的にシステムメッセージやダイスだけの発言は取得せず、ダイス付きのセリフはコマンドを除いた本文だけを読み上げ、結果は読みません。各VTTの対応状況は[セットアップガイド](docs/setup-guide.md#collectorとは)を参照してください。
 
 - [Quick Start](quickstart.md)
 - 詳細情報
   - [接続図・Collectorの説明・セットアップ](docs/setup-guide.md)
   - [起動・設定の詳細](tts-bridge/README.md)
-  - [音声出力にDiscordを利用する場合](tts-bridge/discord/README.md)
+  - [音声出力にDiscordを利用する場合](docs/discord.md)
   - [HTTPS公開設定例](docs/online.md)
 
 ### TRPG-Voice-Bridge の紹介

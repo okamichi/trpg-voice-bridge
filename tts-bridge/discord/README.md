@@ -44,7 +44,7 @@ node try-play.mjs --check
 cd ..
 ```
 
-Macのzshで、トークンを履歴・画面に残さず入力します（チャットには貼らないでください）。
+シェルで、トークンを履歴・画面に残さず入力します。
 
 ```sh
 read -s 'DISCORD_BOT_TOKEN?Bot token: '; echo
@@ -60,7 +60,7 @@ Bot名、招待URL、`サーバー名 / チャンネル名: ID` が表示され�
 WAVは120秒以内、モノラルまたはステレオ、16/24/32bit PCMまたは32/64bit floatです。
 
 ```sh
-node discord/try-play.mjs チャンネルID /絶対パス/音声.wav
+node discord/try-play.mjs チャンネルID target.wav
 unset DISCORD_BOT_TOKEN
 ```
 
@@ -77,6 +77,4 @@ FFmpegは使いません。
 
 「送信完了」は音声を実際に聞けたことを保証しません。Discord側で実際に聴いて確認してください。
 
-依存はこのディレクトリだけにインストールします。本体のnpm ciには含まれません。
-`@discordjs/voice` は計画に合わせ0.19.2に固定しています。
 参考: [公式Voice接続ガイド](https://discordjs.guide/voice/voice-connections)。
