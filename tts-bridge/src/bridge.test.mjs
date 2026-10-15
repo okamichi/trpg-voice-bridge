@@ -1575,3 +1575,42 @@ test("a discovered FVTT speaker is bound to its Actor and keeps its voice across
     first.character.id,
   );
 });
+
+test("TTS rejection explains missing reference and a successful retry clears the error", async (t) => {
+  let missing = true;
+  const { store, engine } = setup(t, {
+    fetchImpl: async () =>
+      missing
+        ? Response.json(
+            {
+              error: {
+                message:
+                  'has no voice named "saved-voice"; its voices are none',
+                param: "voice",
+                code: "unsupported_value",
+              },
+            },
+            { status: 400 },
+          )
+        : new Response(mockWav()),
+  });
+  store.change((config) => {
+    config.provider.type = "irodori";
+    config.voiceProfiles[0].voiceId = "saved-voice";
+  });
+  const notifications = [];
+  engine.on("notification", (n) => notifications.push(n));
+  engine.ingress(event(engine, "missing-reference"), "one");
+  await idle(engine);
+  assert.match(engine.lastError, /参照音声「saved-voice」/);
+  assert.equal(notifications.filter((n) => n.type === "audio.ready").length, 0);
+  assert.equal(
+    notifications.find((n) => n.type === "order.skipped").status,
+    "failed",
+  );
+  missing = false;
+  engine.ingress(event(engine, "reference-restored"), "one");
+  await idle(engine);
+  assert.equal(engine.lastError, null);
+  assert.equal(notifications.filter((n) => n.type === "audio.ready").length, 1);
+});

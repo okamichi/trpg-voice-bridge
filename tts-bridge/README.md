@@ -1,5 +1,7 @@
 # TRPG Voice Bridge
 
+Discord BotのWAV単体再生は実機で確認済みです（2026-10-15）。[Discord接続の手順・検証状況](discord/README.md)を参照してください。
+
 Node.js **22.13以上**。trpg-voice-bridgeは`main.mjs`で起動します。依存はWebSocketの`ws`、設定・認証・発言台帳の保存先はNode組込みSQLiteです。
 
 構成と音声担当者・参加者それぞれの操作は[セットアップガイド](../docs/setup-guide.md)を先に参照してください。Collectorは音声担当者用のブラウザ拡張です。GMでもPLの一人でも担当できます。コードは`collector/`に含まれ、ほかの参加者にはインストール不要です。

@@ -356,6 +356,10 @@ export class Engine extends EventEmitter {
   audioBytes() {
     return [...this.audio.values()].reduce((s, a) => s + a.bytes, 0);
   }
+  audioFile(audioId) {
+    const audio = this.audio.get(audioId);
+    return audio && audio.retainUntil > Date.now() ? audio.file : null;
+  }
   saveAudio(wav) {
     const info = inspectWav(wav);
     check(
@@ -393,6 +397,7 @@ export class Engine extends EventEmitter {
           deliveryCaptionMode: o.deliveryCaptionMode,
         });
         inspectWav(wav);
+        this.lastError = null;
         o.resolve(wav);
         return;
       }
@@ -421,6 +426,7 @@ export class Engine extends EventEmitter {
       }
       if (o.epoch !== this.playbackEpoch || o.status !== "synthesizing") return;
       const now = Date.now();
+      this.lastError = null;
       a.retainUntil = Math.max(a.retainUntil, now + 600000);
       o.ready = {
         audio: {

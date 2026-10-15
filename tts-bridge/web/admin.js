@@ -35,17 +35,23 @@ async function refresh() {
   $("toggle").textContent = accepting ? "読み上げ停止" : "読み上げ開始";
   $("toggle").disabled = false;
   $("connection").textContent =
-    `Irodori: ${d.tts.status === "unreachable" ? "接続できません" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
-  $("collectors").textContent = d.collectors.length
-    ? d.collectors
-        .map(
-          (c) =>
-            `${c.source.adapter} / ${c.source.contextId}: ${c.online ? "接続中" : "切断"} — ${c.diagnostic}`,
-        )
-        .join("\n")
-    : "Collector: 未接続（VTTのタブで拡張機能を開いて接続してください）";
-  $("participants").textContent = `参加者: ${d.players.length} 接続`;
-  $("recovery").hidden = !d.degraded;
+    `Irodori-TTS: ${d.tts.status === "unreachable" ? "接続できません" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
+  const collectors = d.collectors.length
+    ? d.collectors.map(
+        (c) =>
+          `${c.source.adapter} / ${c.source.contextId}: ${c.online ? "接続中" : "切断"} — ${c.diagnostic}`,
+      )
+    : ["未接続（VTTのタブで拡張機能を開いて接続してください）"];
+  $("collectors").replaceChildren(
+    ...collectors.map((text) => {
+      const line = document.createElement("div");
+      line.textContent = text;
+      return line;
+    }),
+  );
+  $("participants").textContent = `参加者 ${d.players.length} 接続`;
+  $("recovery").hidden = !d.degraded && !d.lastError;
+  $("recover").hidden = !d.degraded;
   $("failure").textContent = d.lastError ?? "";
   $("pairingSection").hidden = !pending.length;
   $("pairings").replaceChildren();
@@ -245,4 +251,29 @@ await run(async () => {
   $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
   await refresh();
   setInterval(() => run(refresh), 5000);
+  for (const extension of await api("extensions")) {
+    const row = document.createElement("tr"),
+      label = document.createElement("th"),
+      connectionStatus = document.createElement("td");
+    label.scope = "row";
+    label.textContent = extension.title;
+    connectionStatus.textContent = "確認しています…";
+    row.append(label, connectionStatus);
+    $("connectionRows").append(row);
+    const container = document.createElement("div");
+    $("extensions").append(container);
+    try {
+      const { mount } = await import(extension.script);
+      await mount(container, {
+        setConnectionStatus: (text) => {
+          connectionStatus.textContent = text;
+        },
+        api: (path, method, body) =>
+          api(`ext/${extension.id}/${path}`, method, body),
+      });
+    } catch {
+      connectionStatus.textContent = "読み込めませんでした";
+      container.textContent = `${extension.title}: 読み込めませんでした`;
+    }
+  }
 });

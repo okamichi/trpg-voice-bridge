@@ -56,9 +56,24 @@ export function createApp({
   providerOptions = {},
   initial,
   loadDefaults,
+  extensions = [],
 } = {}) {
   const store = new Store(dataDir, initial ?? initialConfig(profiles)),
     engine = new Engine(store, providerOptions);
+  const installedExtensions = new Map();
+  for (const factory of extensions) {
+    try {
+      const extension = factory({ engine, dataDir });
+      if (
+        !/^[a-z0-9-]+$/.test(extension.id) ||
+        installedExtensions.has(extension.id)
+      )
+        throw new Error("拡張IDが不正です");
+      installedExtensions.set(extension.id, extension);
+    } catch {
+      console.error("拡張の初期化に失敗しました");
+    }
+  }
   const origins = new Set([
       localOrigin,
       ...(publicOrigin ? [publicOrigin] : []),
@@ -266,6 +281,18 @@ export function createApp({
         method = req.method;
       if (path === "/healthz" && method === "GET")
         return json(res, 200, { status: "ok" });
+      const extensionScript = path.match(
+        /^\/web\/ext\/([a-z0-9-]+)\/admin\.js$/,
+      );
+      if (method === "GET" && extensionScript) {
+        origin(req, true);
+        const extension = installedExtensions.get(extensionScript[1]);
+        check(extension, "拡張がありません", 404);
+        res.writeHead(200, {
+          "Content-Type": "text/javascript; charset=utf-8",
+        });
+        return res.end(readFileSync(extension.adminScript));
+      }
       const staticFiles = {
         "/player/": ["player.html", "text/html"],
         "/admin/": ["admin.html", "text/html"],
@@ -344,6 +371,32 @@ export function createApp({
       }
       if (path.startsWith("/api/v1/admin/")) {
         admin(req);
+        if (path === "/api/v1/admin/extensions" && method === "GET")
+          return json(
+            res,
+            200,
+            [...installedExtensions.values()].map(({ id, title }) => ({
+              id,
+              title,
+              script: `/web/ext/${id}/admin.js`,
+            })),
+          );
+        const extensionRoute = path.match(
+          /^\/api\/v1\/admin\/ext\/([a-z0-9-]+)\/(.*)$/,
+        );
+        if (extensionRoute) {
+          const extension = installedExtensions.get(extensionRoute[1]);
+          check(extension, "拡張がありません", 404);
+          const result = await extension.admin({
+            method,
+            path: extensionRoute[2],
+            query: url.searchParams,
+            body: ["POST", "PUT", "PATCH"].includes(method)
+              ? await body(req)
+              : undefined,
+          });
+          return json(res, result.status ?? 200, result.data);
+        }
         if (path === "/api/v1/admin/config" && method === "GET")
           return json(res, 200, store.config);
         if (path === "/api/v1/admin/delivery" && method === "PUT") {
@@ -894,6 +947,11 @@ export function createApp({
     wss,
     close: async () => {
       clearInterval(heartbeat);
+      await Promise.allSettled(
+        [...installedExtensions.values()].map((ext) =>
+          Promise.resolve().then(() => ext.close()),
+        ),
+      );
       engine.close();
       for (const ws of wss.clients) ws.terminate();
       await new Promise((r) => server.close(r));

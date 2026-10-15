@@ -12,15 +12,20 @@
     <p id="notice" role="status"></p>
     <section>
       <h2>接続状態</h2>
-      <p id="connection">確認しています…</p>
-      <div id="collectors"></div>
-      <p id="participants"></p>
+      <table class="connection-table" aria-label="接続状態">
+        <tbody id="connectionRows">
+          <tr><th scope="row">TTSサーバー</th><td id="connection">確認しています…</td></tr>
+          <tr><th scope="row">Collector</th><td id="collectors">確認しています…</td></tr>
+          <tr><th scope="row">Player</th><td id="participants">確認しています…</td></tr>
+        </tbody>
+      </table>
       <button id="toggle" disabled>読み上げ開始</button>
       <button id="copyInvite">参加URLをコピー</button>
       <button id="openPlayer">Playerを開く</button>
       <p id="invite" class="muted"></p>
       <p>キャラの声はPlayerで全員が設定できます。</p>
     </section>
+    <div id="extensions"></div>
     <section id="pairingSection" hidden>
       <h2>Collectorの初回接続を承認</h2>
       <p>拡張機能に表示された確認コードと一致する接続を承認してください。</p>

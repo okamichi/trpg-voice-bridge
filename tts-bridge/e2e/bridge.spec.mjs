@@ -528,3 +528,81 @@ test("real Irodori generates once for repeated input and reaches a browser Playe
     { timeout: 15000 },
   );
 });
+
+test("admin shows non-timeout synthesis errors and clears the notice after recovery", async ({
+  page,
+}) => {
+  app.engine.lastError =
+    "TTS HTTP 400: 参照音声「saved-voice」が現在のTTSサーバーに登録されていません";
+  await page.goto(app.adminUrl());
+  await expect(page.locator("#failure")).toBeVisible();
+  await expect(page.locator("#failure")).toContainText(
+    "参照音声「saved-voice」",
+  );
+  await expect(page.locator("#recover")).toBeHidden();
+  app.engine.lastError = null;
+  await page.reload();
+  await expect(page.locator("#recovery")).toBeHidden();
+});
+
+test("Player audio can stop mid-sentence while logs and other listeners continue; resume drops stopped speech", async ({
+  browser,
+}) => {
+  const { mockWav } = await import("../src/provider.mjs");
+  const originalSave = app.engine.saveAudio.bind(app.engine);
+  app.engine.saveAudio = () => originalSave(mockWav(2));
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  try {
+    const pages = await Promise.all(
+      contexts.map((context) => context.newPage()),
+    );
+    for (const page of pages) {
+      await page.addInitScript(() => {
+        window.stoppedSources = 0;
+        const originalStop = AudioBufferSourceNode.prototype.stop;
+        AudioBufferSourceNode.prototype.stop = function (...args) {
+          window.stoppedSources++;
+          return originalStop.apply(this, args);
+        };
+      });
+      await observe(page);
+      await page.goto(invite);
+      await expect(page.locator("#status")).toContainText("接続しました");
+      await page.getByRole("button", { name: "音声を有効にする" }).click();
+    }
+    const id = post("playing").orderId;
+    await expect
+      .poll(() => pages[0].evaluate(() => window.started))
+      .toEqual([id]);
+    const queued = post("queued-before-stop").orderId;
+    await expect(pages[0].locator("#log li")).toHaveCount(2);
+    await pages[0]
+      .getByRole("button", { name: "音声を停止", exact: true })
+      .click();
+    await expect(
+      pages[0].getByRole("button", { name: "音声を再開する" }),
+    ).toBeVisible();
+    await expect(pages[0].locator("#status")).toContainText("停止しました");
+    expect(await pages[0].evaluate(() => window.stoppedSources)).toBe(1);
+    const stopped = post("while-stopped").orderId;
+    await expect(pages[0].locator("#log li")).toHaveCount(3);
+    await expect(pages[0].locator("#characters")).toContainText("メリッサ");
+    await expect
+      .poll(() => pages[1].evaluate(() => window.started))
+      .toEqual([id, queued, stopped]);
+    expect(await pages[0].evaluate(() => window.started)).toEqual([id]);
+    await pages[0].getByRole("button", { name: "音声を再開する" }).click();
+    await expect(
+      pages[0].getByRole("button", { name: "音声を停止", exact: true }),
+    ).toBeEnabled();
+    const resumed = post("after-resume").orderId;
+    await expect
+      .poll(() => pages[0].evaluate(() => window.started))
+      .toEqual([id, resumed]);
+    await expect(
+      pages[0].getByRole("button", { name: "音声を停止", exact: true }),
+    ).toBeVisible();
+  } finally {
+    for (const context of contexts) await context.close();
+  }
+});

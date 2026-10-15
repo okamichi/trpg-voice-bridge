@@ -1,6 +1,6 @@
 # TRPG Voice Bridge
 
-FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者（GMまたはPL）のブラウザ拡張で公開発言を取り込み、Irodori-TTS-Server (あるいは speech.cpp) で発言テキストの音声生成を動的に行って、参加者のブラウザへ同じ音声を配るためのシステムです。
+FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者（GMまたはPL）のブラウザ拡張で公開発言を取り込み、Irodori-TTS-Server (あるいは speech.cpp) で発言テキストの音声生成を動的に行って、参加者のブラウザへ、あるいは Discord Bot 経由で同じ音声を配るためのシステムです。
 
 ![TRPG Voice Bridgeのコンポーネント図](./compornent.png)
 
@@ -12,6 +12,7 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者�
 - 詳細情報
   - [接続図・Collectorの説明・セットアップ](docs/setup-guide.md)
   - [起動・設定の詳細](tts-bridge/README.md)
+  - [音声出力にDiscordを利用する場合](tts-bridge/discord/README.md)
   - [HTTPS公開設定例](docs/online.md)
 
 ## Irodori-TTS-Server について
@@ -69,12 +70,14 @@ VTTのチャットで、発言の中に絵文字か全角の丸カッコで指�
 ### /player 卓音声再生・キャラ声紐付けページ
 
 参加者が音声を聞き、セリフのログを確認し、キャラの声を設定する画面です。ログのセリフは、自分だけもう一度再生できます。
+参加者はこの画面を通じて音声を聴くことができます。
 
 ![Player画面](./trpg-voice-bridge-player.png)
 
 ### /admin 管理ページ
 
 接続状態の確認、読み上げの開始・停止、参加URLの発行などを行います。
+また、TRPG-Voice-Bridge 自体が Discord Bot として振る舞い、ボイスチャットを通じて音声を送信することもできますが、それらの利用設定もここで行うことができます。
 
 ![管理画面](./trpg-voice-bridge-admin.png)
 
