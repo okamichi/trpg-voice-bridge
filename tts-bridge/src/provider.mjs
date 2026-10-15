@@ -151,8 +151,32 @@ export async function synthesize(
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error(`TTS HTTP ${response.status}`);
+    let detail;
+    try {
+      detail = JSON.parse((await readLimited(response, 8192)).toString("utf8"));
+    } catch {
+      // An HTML proxy error or an oversized body must not hide the HTTP status.
+    } finally {
+      await response.body?.cancel().catch(() => {});
+    }
+    const problem = detail?.error;
+    if (
+      response.status === 400 &&
+      problem?.param === "voice" &&
+      ["unsupported_value", "voice_not_found"].includes(problem.code) &&
+      typeof problem.message === "string" &&
+      /no voice named|voice.*not found|unknown voice/i.test(problem.message)
+    )
+      throw new Error(
+        `TTS HTTP 400: 参照音声「${voice.voiceId}」が現在のTTSサーバーに登録されていません。音声フォルダーの指定と登録済み音声を確認してください`,
+      );
+    const message =
+      typeof problem?.message === "string"
+        ? problem.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 300)
+        : "";
+    throw new Error(
+      `TTS HTTP ${response.status}${message ? `: ${message}` : ""}`,
+    );
   }
   return readLimited(response, AUDIO_LIMIT);
 }

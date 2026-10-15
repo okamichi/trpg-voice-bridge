@@ -13,7 +13,17 @@ const configPath = resolve(
 );
 const loadDefaults = () => JSON.parse(readFileSync(configPath));
 const initial = loadDefaults();
+const extensions = [];
+const extensionUrl = new URL("./discord/extension.mjs", import.meta.url);
+try {
+  const { createExtension } = await import(extensionUrl.href);
+  extensions.push(createExtension);
+} catch (error) {
+  if (error.code !== "ERR_MODULE_NOT_FOUND" || error.url !== extensionUrl.href)
+    console.error("拡張を読み込めませんでした。Bridgeのみ起動します。");
+}
 const app = createApp({
+  extensions,
   dataDir,
   initial,
   loadDefaults,
@@ -36,5 +46,10 @@ app.engine.on("notification", (message) => {
 app.server.listen(port, host, () => {
   console.log(`管理用リンク（共有しないでください）: ${app.adminUrl()}`);
 });
+let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"])
-  process.once(signal, () => app.close().then(() => process.exit(0)));
+  process.once(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    app.close().then(() => process.exit(0));
+  });

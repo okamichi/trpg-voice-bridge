@@ -237,3 +237,14 @@ th {
   padding: 6px;
   border-bottom: 1px solid var(--border);
 }
+.connection-table {
+  margin-bottom: 16px;
+}
+.connection-table th {
+  width: 140px;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.connection-table td {
+  overflow-wrap: anywhere;
+}

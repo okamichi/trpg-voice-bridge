@@ -13,6 +13,7 @@ let socket,
   notificationSeq = 0,
   offset = 0,
   ended = false,
+  resumeLatest = false,
   connecting = false,
   retry = 1000;
 const muted = new Set(),
@@ -57,8 +58,7 @@ const playback = new Playback({
   play: (buffer) =>
     new Promise((resolve, reject) => {
       if (context.state !== "running") {
-        playback.enabled = false;
-        $("enable").hidden = false;
+        stopAudio("音声を再開してください");
         reject(new Error("音声を再開してください"));
         return;
       }
@@ -147,8 +147,7 @@ function addLog(item) {
       return;
     }
     if (!playback.enabled) {
-      $("enable").hidden = false;
-      status("先に「音声を有効にする」を押してください");
+      status(`先に「${$("enable").textContent}」を押してください`);
       return;
     }
     const waiting = !!playback.current;
@@ -203,13 +202,25 @@ function fresh(n) {
   notificationSeq = n.notificationSeq;
   playback.reset(meta, baseline);
 }
+function stopAudio(message) {
+  playback.disable();
+  resumeLatest = true;
+  $("enable").textContent = "音声を再開する";
+  renderLog();
+  status(message);
+  report("player.state", "idle");
+}
 async function latest() {
   const r = await fetch(`/api/v1/rooms/${meta?.roomId ?? "campaign-01"}/state`);
   if (!r.ok) throw new Error("参加リンクを開き直してください");
   const snapshot = await r.json();
   fresh(snapshot);
   restoreLog(snapshot);
-  status("最新の発言から再生します");
+  status(
+    playback.enabled
+      ? "最新の発言から再生します"
+      : "Playerの音声は停止中です。再開すると、新しい発言から再生します",
+  );
 }
 function connect() {
   if (ended || connecting) return;
@@ -245,7 +256,7 @@ function connect() {
       status(
         playback.enabled
           ? "接続しました"
-          : "接続しました。音声を有効にしてください",
+          : "接続しました。Playerの音声は停止中です",
       );
       return;
     }
@@ -282,7 +293,7 @@ function connect() {
       log.get(n.orderId).unavailable = true;
     addLog(n);
     renderLog();
-    playback.accept(n);
+    if (playback.enabled) playback.accept(n);
   };
   socket.onclose = async () => {
     connecting = false;
@@ -307,6 +318,11 @@ function connect() {
   socket.onerror = () => socket.close();
 }
 $("enable").onclick = async () => {
+  if (playback.enabled) {
+    stopAudio("Playerの音声を停止しました。ログと声の設定は引き続き使えます");
+    return;
+  }
+  $("enable").disabled = true;
   try {
     channel?.postMessage({ type: "active", roomId: meta?.roomId, clientId });
     if (!context) {
@@ -315,15 +331,17 @@ $("enable").onclick = async () => {
       gain.gain.value = Number($("volume").value);
       gain.connect(context.destination);
       context.onstatechange = () => {
-        if (context.state !== "running") {
-          status("音声が中断されています。再開してください");
-          $("enable").hidden = false;
-        }
+        if (context.state !== "running" && playback.enabled)
+          stopAudio("音声が中断されています。再開してください");
       };
     }
     await context.resume();
     if (context.state !== "running")
       throw new Error("音声を再開できませんでした");
+    if (resumeLatest) {
+      await latest();
+      resumeLatest = false;
+    }
     const osc = context.createOscillator(),
       g = context.createGain();
     g.gain.value = 0.03;
@@ -331,12 +349,14 @@ $("enable").onclick = async () => {
     osc.start();
     osc.stop(context.currentTime + 0.08);
     playback.enable();
-    $("enable").textContent = "音声を再開する";
-    $("enable").hidden = true;
+    $("enable").textContent = "音声を停止";
+    renderLog();
     status("音声を有効にしました");
     report("player.ready", "idle");
   } catch (e) {
     status(e.message);
+  } finally {
+    $("enable").disabled = false;
   }
 };
 if (channel)
@@ -346,9 +366,7 @@ if (channel)
       e.data.clientId !== clientId &&
       e.data.roomId === meta?.roomId
     ) {
-      playback.disable();
-      $("enable").hidden = false;
-      status("別のタブで音声を有効にしました。このタブは停止しています");
+      stopAudio("別のタブで音声を有効にしました。このタブは停止しています");
     }
   };
 $("volume").oninput = () => {
@@ -356,10 +374,6 @@ $("volume").oninput = () => {
 };
 $("latest").onclick = () => latest().catch((e) => status(e.message));
 setInterval(renderLog, 30000);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && context?.state !== "running")
-    $("enable").hidden = false;
-});
 try {
   const invite = new URLSearchParams(location.hash.slice(1)).get("invite");
   history.replaceState(null, "", location.pathname);

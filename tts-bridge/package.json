@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node main.mjs",
     "start:legacy": "node server.mjs",
-    "test": "node --test *.test.mjs src/*.test.mjs",
+    "test": "node --test *.test.mjs src/*.test.mjs discord/*.test.mjs",
     "test:browser": "playwright test"
   },
   "dependencies": {
