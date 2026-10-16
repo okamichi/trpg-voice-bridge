@@ -12,6 +12,16 @@
 
    初回はIrodori-TTS-ServerのREADMEに従い、使用する環境向けの依存関係を導入してから起動する。
 
+   Irodori-TTS-Server の代わりに、okamichi/speech.cpp も使用することができます(speech.cpp の fork 版)。
+
+   ```sh
+   git clone https://github.com/okamichi/speech.cpp
+   cd speech.cpp
+   cmake -B build
+   cmake --build build -j
+   ./build/speech serve models/Irodori-TTS-v4-Large-Quantized.gguf --port 8088 --irodori-compatible --voices-dir ./voices
+   ```
+
 2. **TRPG Voice Bridgeを起動する**（別のターミナル）
 
    ```sh
@@ -32,6 +42,8 @@
    npm start
    ```
 
+   なお、Discord Bot 経由で音声出力を行う場合は、卓参加者全員が音声再生URLへアクセスできる必要はないため（以降の6から9の作業のキャラの登録・声のデザインをあなたが全員分引き受けるなら）、あなたが 127.0.0.1 のローカルアドレスにアクセスできれば問題ない。
+
    Bridge の環境変数
 
 | 環境変数 | 既定値 | 用途 |
@@ -46,6 +58,8 @@
 3. **Chromeブラウザの拡張機能をインストールする**
 
    `chrome://extensions/`で「デベロッパーモード」をオンにし、「パッケージ化されていない拡張機能を読み込む」から`trpg-voice-bridge/tts-bridge/collector`を選ぶ。
+
+   また、 [音声出力にDiscordを利用する場合](docs/discord.md) 、この設定を行っておく。
 
 ### 音声生成担当の開始手順
 
