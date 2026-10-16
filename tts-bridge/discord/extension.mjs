@@ -397,6 +397,10 @@ export function createExtension({
     title: "Discord Bot",
     adminScript: new URL("./admin.js", import.meta.url),
     ready,
+    voiceProfileUses: () =>
+      settings.greeting.voiceProfileId
+        ? { [settings.greeting.voiceProfileId]: ["Discord入退室"] }
+        : {},
     admin: (request) =>
       request.method === "GET" && request.path === "status"
         ? status().then((data) => ({ status: 200, data }))

@@ -7,6 +7,7 @@ import {
   characterSettings,
   saveCharacter,
   removeCharacter,
+  removeVoiceProfile,
 } from "./character-settings.mjs";
 import { Engine, DEFAULT_SENTENCE_PAUSE_MS } from "./engine.mjs";
 import { DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS } from "./sentences.mjs";
@@ -209,63 +210,31 @@ export function createApp({
     requests.set(k, entry);
     return promise;
   }
-  const upstream = (...a) => (engine.options.fetchImpl ?? fetch)(...a);
-  async function voices() {
-    if (store.config.provider.type === "mock")
-      return [{ id: "none", no_ref: true }];
-    const r = await upstream(
-      `${store.config.provider.baseUrl}/v1/audio/voices`,
-      {
-        signal: AbortSignal.timeout(5000),
-      },
-    );
-    check(r.ok, "参照voice一覧の取得失敗", 502);
-    const data = await r.json();
-    return (data.data ?? []).map((v) => ({ id: v.id, no_ref: v.no_ref }));
+  const voices = () => engine.references.list(store.config.provider);
+  function voiceProfileUses() {
+    const uses = {};
+    for (const ext of installedExtensions.values())
+      for (const [id, labels] of Object.entries(ext.voiceProfileUses?.() ?? {}))
+        uses[id] = [...(uses[id] ?? []), ...labels];
+    return uses;
   }
-  // Only previews this bridge generated can become reference voices, and
-  // existing voice ids are never replaced.
   async function registerVoice(b) {
-    check(
-      store.config.provider.type !== "mock",
-      "モックでは参照音声を登録できません",
-      409,
-    );
-    check(
-      typeof b.voiceId === "string" &&
-        /^[A-Za-z0-9_-]{1,64}$/.test(b.voiceId) &&
-        !["none", "no_ref", "no-ref", "null", "text-only"].includes(
-          b.voiceId.toLowerCase(),
-        ),
-      "参照音声IDは英数字・_・-の64文字以内です（noneなどは使えません）",
-    );
     const preview = previews.get(b.previewId);
     check(
       preview,
       "試聴音声の保管期限が切れました。もう一度試聴してください",
       404,
     );
-    const taken = "同じIDの参照音声が既にあります。別のIDにしてください";
-    check(!(await voices()).some((v) => v.id === b.voiceId), taken, 409);
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([preview.wav], { type: "audio/wav" }),
-      `${b.voiceId}.wav`,
-    );
-    form.append("voice_id", b.voiceId);
-    const r = await upstream(
-      `${store.config.provider.baseUrl}/v1/audio/voices`,
-      { method: "POST", body: form, signal: AbortSignal.timeout(30000) },
-    );
-    await r.body?.cancel();
-    check(r.status !== 409, taken, 409);
-    check(r.ok, `参照音声の登録に失敗しました（TTS HTTP ${r.status}）`, 502);
-    return { id: b.voiceId };
+    return engine.references.register({
+      provider: store.config.provider,
+      voiceId: b.voiceId,
+      wav: preview.wav,
+    });
   }
   function changed(before) {
     engine.configChanged(before);
   }
+  let closing = false;
   const server = createServer(async (req, res) => {
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -275,6 +244,7 @@ export function createApp({
       "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
     );
     try {
+      check(!closing, "アプリ終了中です", 503);
       check(hosts.has(req.headers.host), "許可されていないHostです", 403);
       const url = new URL(req.url, localOrigin),
         path = url.pathname,
@@ -399,6 +369,31 @@ export function createApp({
         }
         if (path === "/api/v1/admin/config" && method === "GET")
           return json(res, 200, store.config);
+        if (
+          path === "/api/v1/admin/chat-voice-registration" &&
+          method === "PUT"
+        ) {
+          const b = await body(req);
+          check(
+            typeof b.chatVoiceRegistrationEnabled === "boolean",
+            "チャットによる登録機能の設定が不正です",
+          );
+          store.change((c) => {
+            store.compare(c.chatVoiceRegistrationEnabled ?? false, b.before);
+            c.chatVoiceRegistrationEnabled = b.chatVoiceRegistrationEnabled;
+            if (!b.chatVoiceRegistrationEnabled)
+              store.voiceCommands.cancel(
+                null,
+                "チャット登録機能がOFFになったため中断しました",
+              );
+          });
+          engine.chatVoices.reconcile();
+          engine.notify("characters.changed");
+          return json(res, 200, {
+            chatVoiceRegistrationEnabled:
+              store.config.chatVoiceRegistrationEnabled,
+          });
+        }
         if (path === "/api/v1/admin/delivery" && method === "PUT") {
           const b = await body(req);
           check(
@@ -418,7 +413,10 @@ export function createApp({
           store.change((c) => {
             store.compare(c.provider, b.before);
             c.provider.baseUrl = b.baseUrl;
+            store.voiceCommands.cancel(null, "TTS接続先の変更で中断しました");
           });
+          engine.chatVoices.reconcile();
+          engine.notify("characters.changed");
           return json(res, 200, store.config.provider);
         }
         if (path === "/api/v1/admin/splitting" && method === "PUT") {
@@ -522,6 +520,7 @@ export function createApp({
             tts,
             degraded: engine.degraded,
             lastError: engine.lastError,
+            voiceCommands: store.voiceCommands.diagnostics(),
             pending: engine.queue.length,
             busy: engine.busy,
             audioBytes: engine.audioBytes(),
@@ -588,7 +587,7 @@ export function createApp({
             engine.collectors.clear();
           else if (b.command === "reset-settings") {
             check(b.confirm === true, "初期化の確認が必要です");
-            engine.reset();
+            engine.reset(false, "設定リセットで中断しました");
             const before = store.config;
             store.resetDefaults(loadDefaults?.());
             changed(before);
@@ -699,7 +698,7 @@ export function createApp({
         return json(res, result.http, result);
       }
       const settingsRoute =
-        /^\/api\/v1\/rooms\/([\w.-]+)\/(characters(?:\/([\w.-]+))?|voices|previews)$/.exec(
+        /^\/api\/v1\/rooms\/([\w.-]+)\/(characters(?:\/([\w.-]+))?|voice-profiles\/([\w.-]+)|voices|previews)$/.exec(
           path,
         );
       if (settingsRoute) {
@@ -707,7 +706,25 @@ export function createApp({
         player(req);
         check(settingsRoute[1] === store.config.roomId, "別の卓です", 403);
         if (method === "GET" && settingsRoute[2] === "characters")
-          return json(res, 200, characterSettings(store));
+          return json(res, 200, {
+            ...characterSettings(store),
+            voiceProfileUses: voiceProfileUses(),
+          });
+        if (method === "DELETE" && settingsRoute[4]) {
+          const b = await body(req, 65536);
+          const result = await idempotent(req, b, () => {
+            const previous = store.config;
+            const value = removeVoiceProfile(
+              store,
+              settingsRoute[4],
+              b,
+              voiceProfileUses(),
+            );
+            changed(previous);
+            return { value };
+          });
+          return json(res, 200, result);
+        }
         if (method === "GET" && settingsRoute[2] === "voices")
           return json(res, 200, await voices());
         if (["PATCH", "DELETE"].includes(method) && settingsRoute[3]) {
@@ -946,6 +963,9 @@ export function createApp({
     engine,
     wss,
     close: async () => {
+      closing = true;
+      engine.chatVoices.shutdown();
+      const referencesClosed = engine.references.close();
       clearInterval(heartbeat);
       await Promise.allSettled(
         [...installedExtensions.values()].map((ext) =>
@@ -956,6 +976,8 @@ export function createApp({
       for (const ws of wss.clients) ws.terminate();
       await new Promise((r) => server.close(r));
       while (engine.busy) await new Promise((r) => setTimeout(r, 20));
+      await referencesClosed;
+      await engine.chatVoices.drain();
       store.close();
     },
   };

@@ -354,3 +354,15 @@ test("empty voice selection can be saved with message text and can disable eithe
   );
   assert.equal(f.previews.length, 2);
 });
+
+test("voice selected for greetings is reported as used even when Bot is disabled", async (t) => {
+  const f = setup(t);
+  const ext = f.create();
+  assert.deepEqual(ext.voiceProfileUses(), {});
+  await ext.admin({
+    method: "PUT",
+    path: "greeting",
+    body: { enterText: "こんにちは", leaveText: "", voiceProfileId: "voice" },
+  });
+  assert.deepEqual(ext.voiceProfileUses(), { voice: ["Discord入退室"] });
+});

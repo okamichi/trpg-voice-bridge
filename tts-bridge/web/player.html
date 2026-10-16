@@ -74,6 +74,18 @@
       <p>全員で設定できます。声が未設定のキャラから表示します。</p>
       <p id="characterStatus" role="status"></p>
       <div id="characters"></div>
+      <details id="voiceOrganizer">
+        <summary>登録済みの声を整理</summary>
+        <p id="registeredVoiceCount"></p>
+        <div class="voice-table-scroll">
+          <table id="registeredVoices">
+            <thead><tr><th scope="col">登録済みの声の名前</th><th scope="col">使用キャラ</th><th scope="col">試聴</th><th scope="col">削除</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="voiceOrganizerStatus" role="status"></p>
+        <audio id="organizedVoiceAudio" controls hidden></audio>
+      </details>
     </section>
   </main>
   <dialog id="characterEditor">

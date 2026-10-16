@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/http.mjs";
+import { mockWav } from "../src/provider.mjs";
 import { initialConfig } from "../src/store.mjs";
 const source = {
   adapter: "fixture",
@@ -605,4 +606,284 @@ test("Player audio can stop mid-sentence while logs and other listeners continue
   } finally {
     for (const context of contexts) await context.close();
   }
+});
+
+test("chat registration setting persists and restores checkbox after failed save", async ({
+  page,
+}) => {
+  await page.goto(app.adminUrl());
+  await page.getByText("詳細設定", { exact: true }).click();
+  const toggle = page.getByRole("checkbox", {
+    name: "チャットによる登録機能を有効にする",
+  });
+  await expect(toggle).not.toBeChecked();
+  await expect(page.locator("#chatVoiceRegistrationHelp")).toContainText(
+    "（ブリッジ声削除）",
+  );
+  await toggle.check();
+  await expect
+    .poll(() => app.store.config.chatVoiceRegistrationEnabled)
+    .toBe(true);
+  await page.reload();
+  await page.getByText("詳細設定", { exact: true }).click();
+  await expect(toggle).toBeChecked();
+  await page.route("**/api/v1/admin/chat-voice-registration", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "保存テスト失敗" }),
+    }),
+  );
+  await toggle.uncheck();
+  await expect(page.locator("#notice")).toContainText("保存テスト失敗");
+  await expect(toggle).toBeChecked();
+  await expect(toggle).toBeEnabled();
+  expect(app.store.config.chatVoiceRegistrationEnabled).toBe(true);
+});
+
+test("chat failure survives reload; success updates character and plays confirmation; delete unassigns", async ({
+  page,
+}) => {
+  app.store.change((c) => {
+    c.chatVoiceRegistrationEnabled = true;
+  });
+  post(201, "（ブリッジ声登録）若い女性の声");
+  await observe(page);
+  await page.goto(invite);
+  await expect(page.locator("#characters")).toContainText("登録失敗");
+  await page.reload();
+  await expect(page.locator("#characters")).toContainText(
+    "モックでは参照音声を登録できません",
+  );
+  await page.getByRole("button", { name: "音声を有効にする" }).click();
+  app.store.change((c) => {
+    c.provider.type = "irodori";
+  });
+  app.engine.options.fetchImpl = async (url, init = {}) =>
+    url.endsWith("/speech")
+      ? new Response(mockWav())
+      : Response.json({ data: [] });
+  post(202, "（ブリッジ声登録）若い女性の声");
+  await expect.poll(() => page.evaluate(() => window.started.length)).toBe(1);
+  await expect(page.locator("#characters")).not.toContainText("登録失敗");
+  await expect(page.locator("#characters")).toContainText("メリッサの声");
+  post(203, "（ブリッジ声削除）余計な文字");
+  await expect(page.locator("#characters")).toContainText("削除失敗");
+  post(204, "（ブリッジ声削除）");
+  await expect(page.locator("#characters")).toContainText("声が未設定");
+  await expect(page.locator("#characters")).not.toContainText("削除失敗");
+  expect(await page.evaluate(() => window.started.length)).toBe(1);
+});
+
+test("real TTS chat registration, reference speech and deletion", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.TTS_REAL_CHAT_E2E !== "1",
+    "Set TTS_REAL_CHAT_E2E=1; creates a reference voice on the local TTS server",
+  );
+  test.setTimeout(300000);
+  app.store.change((c) => {
+    c.provider.type = "irodori";
+    c.chatVoiceRegistrationEnabled = true;
+  });
+  await observe(page);
+  await page.goto(invite);
+  await expect(page.locator("#status")).toContainText("接続しました");
+  await page.getByRole("button", { name: "音声を有効にする" }).click();
+  const request = post(301, "（ブリッジ声登録）若くて透き通るような女性の声。");
+  await expect
+    .poll(() => app.store.voiceCommands.get(request.orderId).status, {
+      timeout: 160000,
+    })
+    .toBe("completed");
+  await expect
+    .poll(() => page.evaluate(() => window.started.length), { timeout: 15000 })
+    .toBe(1);
+  const character = app.store.config.characters.find((c) =>
+    c.bindings.some((b) => b.speakerId === "melissa"),
+  );
+  const voice = app.store.config.voiceProfiles.find(
+    (v) => v.id === character.voiceProfileId,
+  );
+  expect(
+    (await app.engine.references.list(app.store.config.provider)).some(
+      (v) => v.id === voice.voiceId,
+    ),
+  ).toBe(true);
+  console.log(`Real chat verification reference: ${voice.voiceId}`);
+  // Reconnect because a real generation can outlive the Collector heartbeat interval.
+  app.engine.connect({ source, collectorId: "collector" });
+  const speech = post(302, "この声で冒険を始めましょう。");
+  await expect
+    .poll(() => page.evaluate(() => window.started), { timeout: 150000 })
+    .toContain(speech.orderId);
+  expect(app.engine.orders.get(speech.orderId).voice.voiceId).toBe(
+    voice.voiceId,
+  );
+  app.engine.connect({ source, collectorId: "collector" });
+  post(303, "（ブリッジ声削除）");
+  await expect(page.locator("#characters")).toContainText("声が未設定");
+  expect(app.store.config.voiceProfiles.some((v) => v.id === voice.id)).toBe(
+    true,
+  );
+});
+
+test("Player organizes registered voices, previews privately and deletes only unused entries", async ({
+  browser,
+}) => {
+  const spare = {
+    ...app.store.config.voiceProfiles[0],
+    id: "unused-voice",
+    name: "整理する声",
+  };
+  app.store.change((c) => {
+    c.voiceProfiles.push(spare);
+  });
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  const pages = await Promise.all(contexts.map((c) => c.newPage()));
+  try {
+    for (const p of pages) {
+      await observe(p);
+      await p.goto(invite);
+      await p.getByText("登録済みの声を整理", { exact: true }).click();
+      await expect(p.locator("#registeredVoiceCount")).toHaveText(
+        `登録済みの声：${app.store.config.voiceProfiles.length} / 500件`,
+      );
+    }
+    const page = pages[0];
+    const row = page
+      .locator("#registeredVoices tbody tr")
+      .filter({ hasText: "整理する声" });
+    await expect(
+      row.getByRole("cell", { name: "未使用", exact: true }),
+    ).toBeVisible();
+    const used = page
+      .locator("#registeredVoices tbody tr")
+      .filter({ hasText: app.store.config.voiceProfiles[0].name });
+    await expect(
+      used.getByRole("button", { name: "削除", exact: true }),
+    ).toBeDisabled();
+    await page.screenshot({
+      path: "verification/player-voice-organizer.png",
+      fullPage: true,
+    });
+    let previews = 0;
+    app.engine.options.fetchImpl = async () => {
+      previews++;
+      return new Response(mockWav());
+    };
+    await row.getByRole("button", { name: "試聴", exact: true }).click();
+    await expect(page.locator("#organizedVoiceAudio")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.locator("#organizedVoiceAudio").evaluate((a) => a.currentTime),
+      )
+      .toBeGreaterThan(0);
+    expect(previews).toBe(0); // mock provider is local; no TTS reference DELETE is sent either.
+    expect(app.engine.orders.size).toBe(0);
+    expect(await pages[1].evaluate(() => window.started)).toEqual([]);
+    page.once("dialog", (d) => d.dismiss());
+    await row.getByRole("button", { name: "削除", exact: true }).click();
+    await expect(row).toHaveCount(1);
+    const initialCount = app.store.config.voiceProfiles.length;
+    page.once("dialog", (d) => d.accept());
+    await row.getByRole("button", { name: "削除", exact: true }).click();
+    for (const p of pages) {
+      await expect(
+        p
+          .locator("#registeredVoices tbody tr")
+          .filter({ hasText: "整理する声" }),
+      ).toHaveCount(0);
+      await expect(p.locator("#registeredVoiceCount")).toHaveText(
+        `登録済みの声：${initialCount - 1} / 500件`,
+      );
+    }
+    expect(previews).toBe(0);
+    await page
+      .getByRole("button", { name: "試聴・変更", exact: true })
+      .first()
+      .click();
+    await expect(
+      page.locator("select[name=voice] option[value=unused-voice]"),
+    ).toHaveCount(0);
+  } finally {
+    for (const c of contexts) await c.close();
+  }
+});
+
+test("voice deletion API rejects use added after rendering and supports authorized idempotent deletion", async ({
+  page,
+}) => {
+  const spare = {
+    ...app.store.config.voiceProfiles[0],
+    id: "unused-voice",
+    name: "整理する声",
+  };
+  app.store.change((c) => {
+    c.voiceProfiles.push(spare);
+  });
+  await page.goto(invite);
+  await page.getByText("登録済みの声を整理", { exact: true }).click();
+  const row = page
+    .locator("#registeredVoices tbody tr")
+    .filter({ hasText: "整理する声" });
+  await expect(
+    row.getByRole("button", { name: "削除", exact: true }),
+  ).toBeEnabled();
+  app.store.change((c) => {
+    c.characters[0].voiceProfileId = spare.id;
+  });
+  page.once("dialog", (d) => d.accept());
+  await row.getByRole("button", { name: "削除", exact: true }).click();
+  await expect(page.locator("#voiceOrganizerStatus")).toContainText("使用中");
+  await expect(
+    row.getByRole("button", { name: "削除", exact: true }),
+  ).toBeDisabled();
+  const url = `${base}/api/v1/rooms/${app.store.config.roomId}/voice-profiles/${spare.id}`;
+  const headers = {
+    "Content-Type": "application/json",
+    "Idempotency-Key": crypto.randomUUID(),
+  };
+  expect(
+    (
+      await fetch(url, {
+        method: "DELETE",
+        headers,
+        body: JSON.stringify({ before: spare }),
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await page.request.delete(
+        url.replace(app.store.config.roomId, "wrong-room"),
+        { headers, data: { before: spare } },
+      )
+    ).status(),
+  ).toBe(403);
+  app.store.change((c) => {
+    c.characters[0].voiceProfileId = null;
+  });
+  expect(
+    (
+      await page.request.delete(url, { headers, data: { before: spare } })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await page.request.delete(url, { headers, data: { before: spare } })
+    ).status(),
+  ).toBe(200);
+  expect(app.store.config.voiceProfiles.some((v) => v.id === spare.id)).toBe(
+    false,
+  );
+  app.store.change((c) => {
+    c.characters = [];
+  });
+  await page.reload();
+  await page.getByText("登録済みの声を整理", { exact: true }).click();
+  await expect(page.locator("#registeredVoices tbody tr")).toHaveCount(
+    app.store.config.voiceProfiles.length,
+  );
 });

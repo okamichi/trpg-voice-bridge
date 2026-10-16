@@ -1,3 +1,4 @@
+import { VoiceCommandStore } from "./voice-command-store.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
@@ -43,6 +44,7 @@ export class Store {
     this.db.exec(
       "UPDATE events SET status='cancelled' WHERE status IN ('queued','synthesizing','ready')",
     );
+    this.voiceCommands = new VoiceCommandStore(this);
     this.prune();
   }
   auth(key) {
@@ -87,19 +89,27 @@ export class Store {
       for (const item of items) stmt.run(item.id, JSON.stringify(item));
     }
   }
-  change(fn) {
+  transaction(fn) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const next = this.read();
-      const result = fn(next);
-      this.write(next);
+      const result = fn();
       this.db.exec("COMMIT");
-      this.config = next;
       return result;
-    } catch (e) {
+    } catch (error) {
       this.db.exec("ROLLBACK");
-      throw e;
+      throw error;
     }
+  }
+  change(fn) {
+    let next;
+    const result = this.transaction(() => {
+      next = this.read();
+      const value = fn(next);
+      this.write(next);
+      return value;
+    });
+    this.config = next;
+    return result;
   }
   compare(current, before) {
     check(
@@ -118,6 +128,8 @@ export class Store {
   resetDefaults(defaults = this.defaults) {
     const validated = configSchema(defaults);
     this.change((c) => {
+      this.voiceCommands.cancel(null, "設定リセットで中断しました", false);
+      this.voiceCommands.clearAll();
       c.characters = structuredClone(validated.characters);
       c.voiceProfiles = structuredClone(validated.voiceProfiles);
     });
@@ -160,28 +172,30 @@ export class Store {
     return this.db.prepare("SELECT * FROM events WHERE key=?").get(key);
   }
   record(key, fingerprint, orderId, status) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const seq = this.recordInside(key, fingerprint, orderId, status);
+      this.db.exec("COMMIT");
+      return seq;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  recordInside(key, fingerprint, orderId, status) {
     check(
       this.db.prepare("SELECT COUNT(*) AS count FROM events").get().count <
         100000,
       "重複排除台帳の上限です",
       429,
     );
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const seq = this.db
-        .prepare(
-          "UPDATE meta SET value=value+1 WHERE key='seq' RETURNING value",
-        )
-        .get().value;
-      this.db
-        .prepare("INSERT INTO events VALUES (?,?,?,?,?,?)")
-        .run(key, fingerprint, orderId, seq, status, Date.now());
-      this.db.exec("COMMIT");
-      return seq;
-    } catch (e) {
-      this.db.exec("ROLLBACK");
-      throw e;
-    }
+    const seq = this.db
+      .prepare("UPDATE meta SET value=value+1 WHERE key='seq' RETURNING value")
+      .get().value;
+    this.db
+      .prepare("INSERT INTO events VALUES (?,?,?,?,?,?)")
+      .run(key, fingerprint, orderId, seq, status, Date.now());
+    return seq;
   }
   status(orderId, status) {
     this.db
@@ -193,6 +207,7 @@ export class Store {
       .value;
   }
   prune() {
+    this.voiceCommands?.prune();
     this.db
       .prepare("DELETE FROM events WHERE created<?")
       .run(Date.now() - 86400000);
@@ -208,6 +223,7 @@ export function initialConfig(profiles) {
     allowedChannels: ["main"],
     allowedKinds: ["dialogue"],
     publishTextToPlayers: true,
+    chatVoiceRegistrationEnabled: false,
     deliveryCaptionMode: "append",
     sentencePauseMs: 900,
     sentenceSplitThresholdChars: DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS,

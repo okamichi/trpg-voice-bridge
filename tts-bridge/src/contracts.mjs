@@ -131,6 +131,11 @@ export function voiceSchema(v) {
       );
 }
 export function configSchema(c) {
+  check(
+    c?.chatVoiceRegistrationEnabled === undefined ||
+      typeof c.chatVoiceRegistrationEnabled === "boolean",
+    "チャットによる登録機能の設定が不正です",
+  );
   check(c?.configVersion === 1 && id(c.roomId), "設定形式が不正です");
   check(
     Array.isArray(c.allowedChannels) &&

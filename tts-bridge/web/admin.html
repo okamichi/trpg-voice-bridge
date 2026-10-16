@@ -14,9 +14,18 @@
       <h2>接続状態</h2>
       <table class="connection-table" aria-label="接続状態">
         <tbody id="connectionRows">
-          <tr><th scope="row">TTSサーバー</th><td id="connection">確認しています…</td></tr>
-          <tr><th scope="row">Collector</th><td id="collectors">確認しています…</td></tr>
-          <tr><th scope="row">Player</th><td id="participants">確認しています…</td></tr>
+          <tr>
+            <th scope="row">TTSサーバー</th>
+            <td id="connection">確認しています…</td>
+          </tr>
+          <tr>
+            <th scope="row">Collector</th>
+            <td id="collectors">確認しています…</td>
+          </tr>
+          <tr>
+            <th scope="row">Player</th>
+            <td id="participants">確認しています…</td>
+          </tr>
         </tbody>
       </table>
       <button id="toggle" disabled>読み上げ開始</button>
@@ -38,6 +47,20 @@
     </section>
     <details>
       <summary>詳細設定</summary>
+      <section>
+        <h2>チャットによる声登録</h2>
+        <label
+          ><input
+            id="chatVoiceRegistration"
+            type="checkbox"
+            aria-describedby="chatVoiceRegistrationHelp"
+          />チャットによる登録機能を有効にする</label
+        >
+        <p id="chatVoiceRegistrationHelp" class="muted">
+          チャットで「（ブリッジ声登録）若くて透き通るような女性の声。」のような発言キャラの声の自動登録コマンドを受け付ける。「（ブリッジ声削除）」で発言キャラの声の割り当てを解除し、声が未設定の状態に戻す。
+        </p>
+        <div id="voiceCommandDiagnostics"></div>
+      </section>
       <section>
         <h2>Irodori接続先</h2>
         <form id="providerForm">
@@ -84,7 +107,10 @@
       </section>
       <section>
         <h2 id="deliveryCaptionHeading">感情・演技の指定方法</h2>
-        <select id="deliveryCaptionMode" aria-labelledby="deliveryCaptionHeading">
+        <select
+          id="deliveryCaptionMode"
+          aria-labelledby="deliveryCaptionHeading"
+        >
           <option value="append">声の説明に追記型</option>
           <option value="prepend">声の説明より前に</option>
           <option value="replace">声の説明と置換（参照音声登録時）</option>

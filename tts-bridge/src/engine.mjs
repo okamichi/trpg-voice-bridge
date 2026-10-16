@@ -1,3 +1,6 @@
+import { ChatVoices, voiceCommand } from "./chat-voices.mjs";
+import { ReferenceVoices } from "./reference-voices.mjs";
+import { VOICE_CONFIRMATION } from "./voice-defaults.mjs";
 import { EventEmitter } from "node:events";
 import { randomUUID, createHmac } from "node:crypto";
 import {
@@ -44,6 +47,10 @@ export class Engine extends EventEmitter {
     mkdirSync(this.audioDir, { recursive: true, mode: 0o700 });
     for (const f of readdirSync(this.audioDir))
       if (/^[\w-]+\.(wav|tmp)$/.test(f)) unlinkSync(join(this.audioDir, f));
+    this.references = new ReferenceVoices((...args) =>
+      (this.options.fetchImpl ?? fetch)(...args),
+    );
+    this.chatVoices = new ChatVoices(this);
     this.timer = setInterval(() => this.prune(), 30000);
     this.timer.unref();
   }
@@ -115,8 +122,13 @@ export class Engine extends EventEmitter {
   /** Messages waiting or generating; the sentences of one message count once. */
   pendingMessages() {
     const work = this.working ? [this.working, ...this.queue] : this.queue;
-    return new Set(work.map((o) => (o.preview ? o : (o.groupId ?? o.orderId))))
-      .size;
+    return (
+      new Set(
+        work
+          .filter((o) => !o.registrationId)
+          .map((o) => (o.preview ? o : (o.groupId ?? o.orderId))),
+      ).size + this.chatVoices.tasks.size
+    );
   }
   connect(body) {
     check(body?.source && typeof body.source === "object", "入力元が必要です");
@@ -201,6 +213,8 @@ export class Engine extends EventEmitter {
     this.rate.updated = now;
     check(this.rate.tokens >= 1, "入力頻度が高すぎます", 429);
     this.rate.tokens--;
+    const command = voiceCommand(e.text);
+    if (command) return this.chatVoices.accept(e, key, fingerprint, command);
     if (
       !this.config.allowedChannels.includes(e.channel) ||
       !this.config.allowedKinds.includes(e.kind)
@@ -330,6 +344,44 @@ export class Engine extends EventEmitter {
     this.pump();
     return this.publicOrder(order);
   }
+  publishVoiceConfirmation(character, audio) {
+    const orderId = randomUUID();
+    const orderSeq = this.store.record(
+      canonical(["voice-confirmation", this.sessionId, orderId]),
+      hash(audio.id),
+      orderId,
+      "ready",
+    );
+    const now = Date.now();
+    const order = {
+      orderId,
+      orderSeq,
+      characterId: character.id,
+      speakerName: character.displayName,
+      status: "ready",
+      created: now,
+      epoch: this.playbackEpoch,
+      text: VOICE_CONFIRMATION,
+      displayText: VOICE_CONFIRMATION,
+      ready: {
+        audio: {
+          id: audio.id,
+          url: `/api/v1/rooms/${this.config.roomId}/audio/${audio.id}`,
+          bytes: audio.bytes,
+          durationMs: audio.durationMs,
+          mediaType: audio.mediaType,
+        },
+        readyAt: now,
+        playBefore: now + 120000,
+        retainUntil: audio.retainUntil,
+      },
+    };
+    this.orders.set(orderId, order);
+    this.notify("audio.ready", {
+      ...this.publicOrder(order),
+      ...(this.config.publishTextToPlayers ? { text: VOICE_CONFIRMATION } : {}),
+    });
+  }
   setStatus(o, status, error) {
     o.status = status;
     o.error = error;
@@ -390,10 +442,13 @@ export class Engine extends EventEmitter {
     this.working = o;
     try {
       if (o.preview) {
+        o.signal?.throwIfAborted();
+        o.onStart?.();
         if (Date.now() - o.created > 180000)
           throw new Error("試聴待機の期限切れ");
         const wav = await synthesize(o.text, o.voice, o.provider, {
           ...this.options,
+          signal: o.signal,
           deliveryCaptionMode: o.deliveryCaptionMode,
         });
         inspectWav(wav);
@@ -464,28 +519,59 @@ export class Engine extends EventEmitter {
       if (!this.closed) queueMicrotask(() => this.pump());
     }
   }
-  preview(text, voice) {
+  preview(text, voice, options = {}) {
     check(
       typeof text === "string" && text.trim() && [...text].length <= 500,
       "試聴は500文字以内です",
     );
     check(!this.degraded, "TTS不調を確認してください", 503);
-    check(this.pendingMessages() < 30, "生成キューが満杯です", 429);
+    check(
+      this.pendingMessages() < 30 ||
+        (options.registrationId && this.pendingMessages() === 30),
+      "生成キューが満杯です",
+      429,
+    );
+    check(!this.closed, "アプリ終了中です", 503);
     return new Promise((resolve, reject) => {
-      this.queue.push({
+      const entry = {
         preview: true,
         text,
         voice,
-        provider: structuredClone(this.config.provider),
+        provider: structuredClone(options.provider ?? this.config.provider),
         deliveryCaptionMode: this.config.deliveryCaptionMode ?? "append",
         created: Date.now(),
-        resolve,
-        reject,
-      });
+        registrationId: options.registrationId,
+        signal: options.signal,
+        onStart: options.onStart,
+      };
+      const cancelled = () => {
+        const index = this.queue.indexOf(entry);
+        if (index >= 0) this.queue.splice(index, 1);
+        entry.reject(options.signal.reason);
+      };
+      const cleanup = () =>
+        options.signal?.removeEventListener("abort", cancelled);
+      entry.resolve = (value) => {
+        cleanup();
+        resolve(value);
+      };
+      entry.reject = (error) => {
+        cleanup();
+        reject(error);
+      };
+      this.queue.push(entry);
+      options.signal?.addEventListener("abort", cancelled, { once: true });
+      if (options.signal?.aborted) cancelled();
       this.pump();
     });
   }
-  reset(end = false) {
+  reset(
+    end = false,
+    reason = end
+      ? "セッション終了で中断しました"
+      : "読み上げ停止で中断しました",
+  ) {
+    this.chatVoices.cancel(reason);
     this.accepting = false;
     this.playbackEpoch++;
     for (const o of this.orders.values())
@@ -539,8 +625,9 @@ export class Engine extends EventEmitter {
     this.store.prune();
   }
   close() {
+    this.chatVoices.shutdown();
     this.closed = true;
     clearInterval(this.timer);
-    this.reset();
+    this.reset(false, "アプリ終了で中断しました");
   }
 }

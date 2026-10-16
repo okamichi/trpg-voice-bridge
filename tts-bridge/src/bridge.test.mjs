@@ -8,7 +8,11 @@ import { Store, initialConfig } from "./store.mjs";
 import { Engine } from "./engine.mjs";
 import { createApp } from "./http.mjs";
 import { mockWav, inspectWav, payload } from "./provider.mjs";
-import { saveCharacter, removeCharacter } from "./character-settings.mjs";
+import {
+  saveCharacter,
+  removeCharacter,
+  removeVoiceProfile,
+} from "./character-settings.mjs";
 import { resolveCharacter } from "./contracts.mjs";
 import { Playback } from "../web/playback.js";
 import { splitUtterance, MAX_PARTS } from "./sentences.mjs";
@@ -1613,4 +1617,55 @@ test("TTS rejection explains missing reference and a successful retry clears the
   await idle(engine);
   assert.equal(engine.lastError, null);
   assert.equal(notifications.filter((n) => n.type === "audio.ready").length, 1);
+});
+
+test("unused voice deletion frees a slot and persists, while used or stale voices are protected", (t) => {
+  const { store, dir } = setup(t);
+  const original = structuredClone(store.config.voiceProfiles[0]);
+  assert.throws(
+    () => removeVoiceProfile(store, original.id, { before: original }),
+    { status: 409 },
+  );
+  store.change((c) => {
+    c.characters[0].enabled = false;
+    c.voiceProfiles = Array.from({ length: 500 }, (_, i) => ({
+      ...original,
+      id: i ? `unused-${i}` : original.id,
+    }));
+  });
+  assert.throws(
+    () => removeVoiceProfile(store, original.id, { before: original }),
+    { status: 409 },
+  );
+  const unused = structuredClone(store.config.voiceProfiles[1]);
+  assert.throws(
+    () =>
+      removeVoiceProfile(
+        store,
+        unused.id,
+        { before: unused },
+        { [unused.id]: ["Discord入退室"] },
+      ),
+    { status: 409 },
+  );
+  store.change((c) => {
+    c.voiceProfiles[1].caption = "changed by another Player";
+  });
+  assert.throws(
+    () => removeVoiceProfile(store, unused.id, { before: unused }),
+    { status: 409 },
+  );
+  const current = structuredClone(store.config.voiceProfiles[1]);
+  const characters = structuredClone(store.config.characters);
+  removeVoiceProfile(store, current.id, { before: current });
+  assert.equal(store.config.voiceProfiles.length, 499);
+  assert.deepEqual(store.config.characters, characters);
+  assert.throws(
+    () => removeVoiceProfile(store, current.id, { before: current }),
+    { status: 404 },
+  );
+  const reopened = new Store(dir, config());
+  assert.equal(reopened.config.voiceProfiles.length, 499);
+  assert.ok(!reopened.config.voiceProfiles.some((v) => v.id === current.id));
+  reopened.close();
 });

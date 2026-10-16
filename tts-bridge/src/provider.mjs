@@ -140,6 +140,7 @@ export async function synthesize(
   {
     fetchImpl = fetch,
     timeoutMs = 120000,
+    signal,
     deliveryCaptionMode = "append",
   } = {},
 ) {
@@ -148,7 +149,10 @@ export async function synthesize(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: payload(text, voice, provider, deliveryCaptionMode),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: AbortSignal.any([
+      AbortSignal.timeout(timeoutMs),
+      ...(signal ? [signal] : []),
+    ]),
   });
   if (!response.ok) {
     let detail;

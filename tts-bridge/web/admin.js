@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let accepting = false,
   provider,
+  chatVoiceRegistrationEnabled = false,
   deliveryCaptionMode,
   publishText,
   sentencePauseMs,
@@ -31,6 +32,16 @@ async function run(fn) {
 }
 async function refresh() {
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
+  const registrations = (d.voiceCommands ?? []).filter(
+    (x) => x.status === "failed",
+  );
+  $("voiceCommandDiagnostics").replaceChildren(
+    ...registrations.map((x) => {
+      const item = document.createElement("p");
+      item.textContent = `${x.kind === "delete" ? "声削除" : "声登録"}: ${x.characterId ?? "キャラ不明"} — ${x.reason ?? ""}${x.detail ? ` / ${x.detail}` : ""}${x.referenceId ? ` / 参照音声ID（上流に残っている可能性があります）: ${x.referenceId}` : ""}`;
+      return item;
+    }),
+  );
   accepting = d.accepting;
   $("toggle").textContent = accepting ? "読み上げ停止" : "読み上げ開始";
   $("toggle").disabled = false;
@@ -127,6 +138,23 @@ $("publishText").onchange = () =>
         : "Playerにはセリフの本文を表示しません。";
     } finally {
       $("publishText").checked = publishText;
+    }
+  });
+$("chatVoiceRegistration").onchange = () =>
+  run(async () => {
+    const wanted = $("chatVoiceRegistration").checked;
+    $("chatVoiceRegistration").disabled = true;
+    try {
+      chatVoiceRegistrationEnabled = (
+        await api("chat-voice-registration", "PUT", {
+          before: chatVoiceRegistrationEnabled,
+          chatVoiceRegistrationEnabled: wanted,
+        })
+      ).chatVoiceRegistrationEnabled;
+      $("notice").textContent = "チャットによる登録機能の設定を保存しました。";
+    } finally {
+      $("chatVoiceRegistration").checked = chatVoiceRegistrationEnabled;
+      $("chatVoiceRegistration").disabled = false;
     }
   });
 $("deliveryCaptionMode").onchange = () =>
@@ -240,6 +268,8 @@ await run(async () => {
   }
   const config = await api("config");
   provider = config.provider;
+  chatVoiceRegistrationEnabled = config.chatVoiceRegistrationEnabled ?? false;
+  $("chatVoiceRegistration").checked = chatVoiceRegistrationEnabled;
   deliveryCaptionMode = config.deliveryCaptionMode ?? "append";
   publishText = config.publishTextToPlayers;
   sentencePauseMs = config.sentencePauseMs ?? 900;

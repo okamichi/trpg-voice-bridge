@@ -248,3 +248,16 @@ th {
 .connection-table td {
   overflow-wrap: anywhere;
 }
+.voice-table-scroll {
+  overflow-x: auto;
+}
+#registeredVoices {
+  min-width: 440px;
+}
+#registeredVoices td {
+  overflow-wrap: anywhere;
+}
+#registeredVoices button {
+  white-space: nowrap;
+  padding: 7px 10px;
+}

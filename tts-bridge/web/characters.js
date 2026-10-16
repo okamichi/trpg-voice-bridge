@@ -7,6 +7,11 @@ let room,
   previewUrl,
   previewId,
   generation = 0;
+let organizerKey,
+  organizerGeneration = 0,
+  organizerPreviewUrl,
+  organizerPreviewBusy = false;
+const deletingVoices = new Set();
 const dialog = $("characterEditor"),
   form = $("characterForm");
 const fields = [
@@ -37,6 +42,7 @@ export async function refreshCharacters(roomId = room) {
   room = roomId;
   try {
     data = await (await request("characters")).json();
+    renderVoiceOrganizer();
     const list = $("characters");
     list.replaceChildren();
     if (!data.characters.length) {
@@ -73,6 +79,29 @@ export async function refreshCharacters(roomId = room) {
       removeButton.textContent = "削除";
       removeButton.className = "danger";
       removeButton.onclick = () => remove(ch, removeButton);
+      const operation = data.voiceStates?.[ch.id];
+      if (operation) {
+        const status = document.createElement("span");
+        status.className = "voice-operation";
+        status.setAttribute("role", "status");
+        const labels = {
+          queued: "生成待ち",
+          generating: "生成中",
+          registering: "登録中",
+        };
+        const label =
+          operation.status === "failed"
+            ? operation.kind === "delete"
+              ? "削除失敗"
+              : "登録失敗"
+            : (labels[operation.status] ??
+              (operation.unplayed ? "登録済み・停止中のため未再生" : ""));
+        status.textContent = [label, operation.reason, operation.note]
+          .filter(Boolean)
+          .join(" — ");
+        if (status.textContent)
+          row.append(status, document.createElement("br"));
+      }
       row.append(
         name,
         " ",
@@ -87,6 +116,118 @@ export async function refreshCharacters(roomId = room) {
     }
   } catch (e) {
     $("characterStatus").textContent = e.message;
+  }
+}
+function renderVoiceOrganizer() {
+  $("registeredVoiceCount").textContent =
+    `登録済みの声：${data.voiceProfiles.length} / 500件`;
+  const key = JSON.stringify([
+    data.voiceProfiles,
+    data.characters,
+    data.voiceProfileUses,
+  ]);
+  if (key === organizerKey) return;
+  organizerKey = key;
+  const rows = data.voiceProfiles.map((voice) => {
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = voice.name;
+    const users = document.createElement("td");
+    const names = data.characters
+      .filter((ch) => ch.voiceProfileId === voice.id)
+      .map((ch) => ch.displayName);
+    names.push(...(data.voiceProfileUses?.[voice.id] ?? []));
+    users.textContent = names.join("、") || "未使用";
+    const previewCell = document.createElement("td");
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.textContent = "試聴";
+    preview.dataset.voicePreview = "";
+    preview.disabled = organizerPreviewBusy;
+    preview.onclick = () => previewRegisteredVoice(voice);
+    previewCell.append(preview);
+    const deleteCell = document.createElement("td");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "削除";
+    remove.className = "danger";
+    remove.disabled = names.length > 0 || deletingVoices.has(voice.id);
+    if (names.length) remove.title = "使用中の声は削除できません";
+    remove.onclick = () => deleteRegisteredVoice(voice, remove);
+    deleteCell.append(remove);
+    row.append(name, users, previewCell, deleteCell);
+    return row;
+  });
+  $("registeredVoices")
+    .querySelector("tbody")
+    .replaceChildren(...rows);
+}
+function stopOrganizerPreview() {
+  organizerGeneration++;
+  if (organizerPreviewBusy) $("voiceOrganizerStatus").textContent = "";
+  const audio = $("organizedVoiceAudio");
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.hidden = true;
+  if (organizerPreviewUrl) URL.revokeObjectURL(organizerPreviewUrl);
+  organizerPreviewUrl = null;
+}
+$("voiceOrganizer").ontoggle = () => {
+  if (!$("voiceOrganizer").open) stopOrganizerPreview();
+};
+async function previewRegisteredVoice(voice) {
+  if (organizerPreviewBusy) return;
+  stopOrganizerPreview();
+  const current = organizerGeneration;
+  organizerPreviewBusy = true;
+  $("registeredVoices")
+    .querySelectorAll("[data-voice-preview]")
+    .forEach((b) => {
+      b.disabled = true;
+    });
+  $("voiceOrganizerStatus").textContent = "試聴音声を生成しています…";
+  try {
+    const response = await request("previews", "POST", {
+      voice,
+      text: "こんにちは。これからこの声でお話しします。",
+    });
+    const blob = await response.blob();
+    if (current !== organizerGeneration || !$("voiceOrganizer").open) return;
+    organizerPreviewUrl = URL.createObjectURL(blob);
+    const audio = $("organizedVoiceAudio");
+    audio.src = organizerPreviewUrl;
+    audio.hidden = false;
+    $("voiceOrganizerStatus").textContent = "";
+    await audio.play();
+  } catch (e) {
+    if (current === organizerGeneration)
+      $("voiceOrganizerStatus").textContent = e.message;
+  } finally {
+    organizerPreviewBusy = false;
+    $("registeredVoices")
+      .querySelectorAll("[data-voice-preview]")
+      .forEach((b) => {
+        b.disabled = false;
+      });
+  }
+}
+async function deleteRegisteredVoice(voice, button) {
+  if (!confirm(`登録済みの声「${voice.name}」を削除しますか？`)) return;
+  deletingVoices.add(voice.id);
+  button.disabled = true;
+  try {
+    await request(`voice-profiles/${voice.id}`, "DELETE", { before: voice });
+    stopOrganizerPreview();
+    $("voiceOrganizerStatus").textContent = `「${voice.name}」を削除しました。`;
+    await refreshCharacters();
+  } catch (e) {
+    $("voiceOrganizerStatus").textContent = e.message;
+    await refreshCharacters();
+  } finally {
+    deletingVoices.delete(voice.id);
+    // Refresh the row's enabled state even if its data did not change.
+    organizerKey = null;
+    if (data) renderVoiceOrganizer();
   }
 }
 async function remove(ch, button) {
@@ -112,12 +253,8 @@ function loadVoice() {
   const v = data.voiceProfiles.find((v) => v.id === form.elements.voice.value);
   voiceBefore = v ? structuredClone(v) : null;
   const values = v ?? {
+    ...data.voiceDefaults,
     name: `${before.displayName}の声`,
-    voiceId: "none",
-    caption: "",
-    speed: 1,
-    seed: "1",
-    steps: 20,
   };
   for (const key of fields) form.elements[key].value = values[key] ?? "";
   const users = data.characters
@@ -128,6 +265,7 @@ function loadVoice() {
     : "新しい声を作成します。保存後は他のキャラも選べます。";
 }
 async function edit(ch) {
+  stopOrganizerPreview();
   generation++;
   before = structuredClone(ch);
   $("editorStatus").textContent = "";
