@@ -2,7 +2,7 @@
 
 FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者（GMまたはPL）のブラウザ拡張で公開発言を取り込み、Irodori-TTS-Server (あるいは speech.cpp) で発言テキストの音声生成を動的に行って、参加者のブラウザへ、あるいは Discord Bot 経由で同じ音声を配るためのシステムです。
 
-![TRPG Voice Bridgeのコンポーネント図](./compornent.png)
+![TRPG Voice Bridgeのしくみ](./info.png)
 
 キャラの声はPlayerで全員が設定できます。Collectorの初回承認と読み上げ開始・停止は管理画面で行います。
 
