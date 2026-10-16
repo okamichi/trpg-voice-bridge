@@ -17,11 +17,11 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから音声担当者�
 
 ### TRPG-Voice-Bridge の紹介
 
-https://github.com/user-attachments/assets/74e42506-a4c7-4e89-82ac-1c70c314b8b4
+https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
 ### クイックスタートガイド
 
-https://github.com/user-attachments/assets/3177fa79-9eaf-4c6e-ad0c-f957dc5ad51c
+https://github.com/user-attachments/assets/52d2cf97-fa36-4d7d-aa11-4cf8b30f2761
 
 ## Irodori-TTS-Server について
 
