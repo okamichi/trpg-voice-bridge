@@ -55,6 +55,8 @@
 | TTS_CONFIG_FILE | tts-bridge/config.json | 初期設定ファイル |
 | TTS_DATA_DIR | tts-bridge/data | 設定・認証などの保存先 |
 
+   卓ごとに設定や声を分ける場合は、[卓ごとにデータを分ける](docs/setup-guide.md#卓ごとにデータを分ける)を参照する。
+
 3. **Chromeブラウザの拡張機能をインストールする**
 
    `chrome://extensions/`で「デベロッパーモード」をオンにし、「パッケージ化されていない拡張機能を読み込む」から`trpg-voice-bridge/tts-bridge/collector`を選ぶ。
