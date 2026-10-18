@@ -89,10 +89,13 @@ else {
     `-DCMAKE_CXX_FLAGS=${map}`,
   );
 }
-const build = join(
-  scratch,
-  `speech-build-${pins.speech.commit}-${pins.ggml.commit}`,
-);
+// Keep independent caches per source revision without exceeding MSBuild's
+// legacy 260-character limit in its nested compiler-probe tracking files.
+const buildKey = createHash("sha256")
+  .update(`${pins.speech.commit}:${pins.ggml.commit}`)
+  .digest("hex")
+  .slice(0, 12);
+const build = join(scratch, `s-${buildKey}`);
 execFileSync("cmake", ["-S", source, "-B", build, ...config], {
   stdio: "inherit",
 });
