@@ -357,6 +357,10 @@ test("management startup link, simplified controls and reset confirmation", asyn
   const player = await popupPromise;
   await expect(player.locator("#characters")).toContainText("メリッサ");
   await page.getByText("詳細設定", { exact: true }).click();
+  const collectorGuide = page.getByText("chrome://extensions");
+  await expect(collectorGuide).toBeHidden();
+  await page.getByText("Collectorの導入について", { exact: true }).click();
+  await expect(collectorGuide).toBeVisible();
   const publishText = page.getByLabel("Playerにセリフの本文を表示する");
   await expect(publishText).toBeChecked();
   await publishText.uncheck();

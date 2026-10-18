@@ -61,6 +61,26 @@
         </p>
         <div id="voiceCommandDiagnostics"></div>
       </section>
+      <section>
+        <details>
+          <summary>Collectorの導入について</summary>
+          <ol>
+            <li>
+              Chromeのアドレスバーに<code>chrome://extensions</code>を入力して開く。
+            </li>
+            <li>右上の「デベロッパーモード」をオンにする。</li>
+            <li>
+              「パッケージ化されていない拡張機能を読み込む」を押し、<code>collector</code>フォルダを選ぶ。配布版は展開したフォルダの中、ソースから起動した場合は<code>tts-bridge/collector</code>にある。
+            </li>
+            <li>
+              VTTのタブで拡張を開き「このタブを接続」を押す。初回は、拡張に表示された確認コードと同じものを、この画面の「Collectorの初回接続を承認」で承認する。
+            </li>
+          </ol>
+          <p class="muted">
+            拡張を更新したら、拡張機能の画面で再読み込みし、VTTのタブから接続し直す。
+          </p>
+        </details>
+      </section>
       <section id="runtimeSection" hidden>
         <h2>TTSの起動設定</h2>
         <p id="runtimeStatus"></p>
