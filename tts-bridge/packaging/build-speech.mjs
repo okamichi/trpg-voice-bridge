@@ -69,8 +69,20 @@ const config = [
   "-DGIT_EXE=",
   `-DGGML_BUILD_COMMIT=${pins.ggml.commit}`,
 ];
-if (windows)
+if (windows) {
+  // clang-cl supports prefix mapping for __FILE__ and debug records. Keep the
+  // Windows ABI/static CRT while removing absolute paths from ggml assertions.
+  const roots = [
+    ...new Set([root.replaceAll("\\", "/"), root.replaceAll("/", "\\")]),
+  ];
+  const map = roots
+    .map((path) => `/clang:-ffile-prefix-map="${path}=source/"`)
+    .join(" ");
   config.push(
+    "-G",
+    "Visual Studio 17 2022",
+    "-T",
+    "ClangCL",
     "-A",
     "x64",
     "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
@@ -79,8 +91,11 @@ if (windows)
     "-DGGML_AVX2=OFF",
     "-DGGML_FMA=OFF",
     "-DGGML_F16C=OFF",
+    `-DCMAKE_C_FLAGS=${map}`,
+    `-DCMAKE_CXX_FLAGS=${map}`,
+    "-DCMAKE_EXE_LINKER_FLAGS=/PDBALTPATH:speech.pdb",
   );
-else {
+} else {
   const map = `-ffile-prefix-map=${root}=source -ffile-prefix-map=${scratch}=build`;
   config.push(
     "-DGGML_METAL=ON",
@@ -92,7 +107,9 @@ else {
 // Keep independent caches per source revision without exceeding MSBuild's
 // legacy 260-character limit in its nested compiler-probe tracking files.
 const buildKey = createHash("sha256")
-  .update(`${pins.speech.commit}:${pins.ggml.commit}`)
+  .update(
+    `${pins.speech.commit}:${pins.ggml.commit}:${windows ? "clangcl-pathmap-v1" : "apple-clang"}`,
+  )
   .digest("hex")
   .slice(0, 12);
 const build = join(scratch, `s-${buildKey}`);
