@@ -89,8 +89,10 @@ if (windows) {
     "-DGGML_AVX2=OFF",
     "-DGGML_FMA=OFF",
     "-DGGML_F16C=OFF",
-    `-DCMAKE_C_FLAGS=${map}`,
-    `-DCMAKE_CXX_FLAGS=${map}`,
+    // Setting CMAKE_<LANG>_FLAGS replaces CMake's MSVC defaults; restate them
+    // (/EHsc enables C++ exceptions, which clang-cl otherwise rejects).
+    `-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS ${map}`,
+    `-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc ${map}`,
     "-DCMAKE_EXE_LINKER_FLAGS=/PDBALTPATH:speech.pdb",
   );
 } else {
@@ -106,7 +108,7 @@ if (windows) {
 // legacy 260-character limit in its nested compiler-probe tracking files.
 const buildKey = createHash("sha256")
   .update(
-    `${pins.speech.commit}:${pins.ggml.commit}:${windows ? "clangcl-pathmap-v1" : "apple-clang"}`,
+    `${pins.speech.commit}:${pins.ggml.commit}:${windows ? "clangcl-pathmap-v2" : "apple-clang"}`,
   )
   .digest("hex")
   .slice(0, 12);
