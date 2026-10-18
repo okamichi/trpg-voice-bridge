@@ -206,7 +206,8 @@ if (windows) {
       v.name,
       v.backend === "vulkan" ? [...system, "vulkan-1.dll"] : system,
     ]),
-    ["bridge-supervisor", system],
+    // The supervisor finds the owner of the TCP listener with IP Helper.
+    ["bridge-supervisor", [...system, "iphlpapi.dll"]],
   ]) {
     const dlls = execFileSync(
       dumpbin,
