@@ -1,21 +1,30 @@
 {
   "name": "trpg-voice-bridge",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
+    "version": "node packaging/version.mjs",
+    "version:check": "node packaging/version.mjs --check",
     "start": "node main.mjs",
     "start:legacy": "node server.mjs",
-    "test": "node --test *.test.mjs src/*.test.mjs discord/*.test.mjs",
-    "test:browser": "playwright test"
+    "test": "node --test *.test.mjs src/*.test.mjs discord/*.test.mjs packaging/*.test.mjs",
+    "test:browser": "playwright test",
+    "package:build": "node packaging/build.mjs",
+    "package:smoke": "node packaging/smoke.mjs",
+    "package:speech": "node packaging/build-speech.mjs",
+    "package:tts-smoke": "node packaging/tts-smoke.mjs"
   },
   "dependencies": {
     "ws": "^8.22.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
     "prettier": "^3.9.9"
   }
 }

@@ -100,7 +100,7 @@ export class ChatVoices {
                 "キャラが無効です。Playerで有効にしてください",
               );
               check(
-                store.config.provider.type !== "mock",
+                engine.config.provider.type !== "mock",
                 "モックでは参照音声を登録できません",
               );
               check(
@@ -173,7 +173,7 @@ export class ChatVoices {
         job,
         character: structuredClone(character),
         voice,
-        provider: structuredClone(store.config.provider),
+        provider: structuredClone(engine.config.provider),
         controller: new AbortController(),
       };
       this.tasks.set(job.id, task);
@@ -200,7 +200,7 @@ export class ChatVoices {
     );
     check(
       this.store.config.chatVoiceRegistrationEnabled &&
-        canonical(this.store.config.provider) === canonical(task.provider),
+        canonical(this.engine.config.provider) === canonical(task.provider),
       "設定変更で中断しました",
       409,
     );

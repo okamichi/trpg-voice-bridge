@@ -1,0 +1,333 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { createServer } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
+import { RuntimeSettings } from "../src/runtime/settings.mjs";
+import { SpeechRuntime } from "../src/runtime/speech.mjs";
+import { createApp } from "../src/http.mjs";
+import { initialConfig } from "../src/store.mjs";
+
+test("runtime settings preserve saved values under CLI overrides and reject invalid input", () => {
+  const dir = mkdtempSync(join(tmpdir(), "runtime-settings-"));
+  try {
+    const settings = new RuntimeSettings(dir);
+    assert.equal(settings.active.mode, "external");
+    settings.save({
+      mode: "bundled",
+      model: join(dir, "モデル.gguf"),
+      ttsPort: 18100,
+    });
+    const overridden = new RuntimeSettings(dir, {
+      mode: "external",
+      ttsPort: 18101,
+    });
+    assert.equal(overridden.active.mode, "external");
+    assert.equal(overridden.saved.mode, "bundled");
+    assert.equal(new RuntimeSettings(dir).active.ttsPort, 18100);
+    for (const invalid of [
+      { mode: "bad" },
+      { model: "relative.gguf" },
+      { ttsPort: 0 },
+      { ttsPort: "123" },
+    ])
+      assert.throws(() => settings.save({ ...settings.saved, ...invalid }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("effective bundled provider never overwrites the external provider and gates requests", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "runtime-provider-"));
+  const runtime = new SpeechRuntime({
+    dataDir: dir,
+    runtimeDir: dir,
+    overrides: { mode: "bundled" },
+  });
+  const initial = initialConfig({});
+  initial.provider = {
+    ...initial.provider,
+    type: "mock",
+    baseUrl: "http://external.invalid:8088",
+  };
+  const app = createApp({
+    dataDir: dir,
+    initial,
+    runtime,
+    providerOptions: {
+      resolveProvider: (saved) => runtime.provider(saved),
+      fetchImpl: runtime.fetch,
+    },
+  });
+  try {
+    assert.equal(app.engine.config.provider.type, "irodori");
+    assert.equal(app.engine.config.provider.baseUrl, "http://127.0.0.1:18088");
+    assert.deepEqual(app.store.config.provider, initial.provider);
+    assert.throws(
+      () => runtime.fetch("http://127.0.0.1:18088/health"),
+      /準備中/,
+    );
+    await runtime.start();
+    assert.equal(runtime.status, "error");
+    assert.match(runtime.error, /GGUF/);
+    assert.deepEqual(app.store.config.provider, initial.provider);
+  } finally {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const helper = resolve(
+  ".packaging/native-build",
+  ...(process.platform === "win32"
+    ? ["Release", "bridge-supervisor.exe"]
+    : ["bridge-supervisor"]),
+);
+function supervise(args) {
+  const child = spawn(helper, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  child.stdin.on("error", () => {});
+  child.events = [];
+  createInterface({ input: child.stdout }).on("line", (line) =>
+    child.events.push(JSON.parse(line)),
+  );
+  child.stderr.resume();
+  child.done = new Promise((resolve) => child.once("close", resolve));
+  return child;
+}
+async function until(fn) {
+  for (let i = 0; i < 200; i++) {
+    const result = fn();
+    if (result) return result;
+    await delay(50);
+  }
+  throw Error("Timed out");
+}
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test(
+  "native supervisor locks data, terminates owned child on EOF, and permits restart",
+  { skip: !existsSync(helper) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "監視 space-"));
+    let first, second, third;
+    try {
+      const script = join(dir, "fake speech.cjs");
+      writeFileSync(script, "setInterval(() => {}, 1000);\n");
+      const lock = join(dir, "bridge.lock");
+      first = supervise([lock, process.execPath, script]);
+      await until(() => first.events.find((e) => e.event === "locked"));
+      second = supervise([lock]);
+      assert.equal(await second.done, 3);
+      first.stdin.write("S");
+      const { pid } = await until(() =>
+        first.events.find((e) => e.event === "spawned"),
+      );
+      assert.ok(alive(pid));
+      first.stdin.end(); // Same kernel EOF as abrupt Bridge exit.
+      assert.equal(await first.done, 0);
+      await until(() => !alive(pid));
+      third = supervise([lock]);
+      await until(() => third.events.find((e) => e.event === "locked"));
+      third.stdin.end("Q");
+      assert.equal(await third.done, 0);
+    } finally {
+      for (const child of [first, second, third])
+        if (child) {
+          child.stdin.end();
+          await child.done;
+        }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "native supervisor stops a startup timeout without releasing the data lock",
+  { skip: !existsSync(helper) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-timeout-"));
+    let owner, competitor;
+    try {
+      const script = join(dir, "child.cjs");
+      writeFileSync(script, "setInterval(() => {}, 1000);");
+      const lock = join(dir, "bridge.lock");
+      owner = supervise([lock, process.execPath, script]);
+      await until(() => owner.events.some((e) => e.event === "locked"));
+      owner.stdin.write("S");
+      const { pid } = await until(() =>
+        owner.events.find((e) => e.event === "spawned"),
+      );
+      owner.stdin.write("T");
+      await until(() => !alive(pid));
+      competitor = supervise([lock]);
+      assert.equal(await competitor.done, 3);
+      owner.stdin.end("Q");
+      assert.equal(await owner.done, 0);
+    } finally {
+      for (const child of [owner, competitor])
+        if (child) {
+          child.stdin.end();
+          await child.done;
+        }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+const runtimeDir = resolve(".packaging/speech-runtime");
+test(
+  "readiness identifies the owned listener without any console output",
+  { skip: !existsSync(helper) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-listener-"));
+    const probe = createServer();
+    await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+    const port = probe.address().port;
+    await new Promise((r) => probe.close(r));
+    let child;
+    try {
+      const script = join(dir, "silent.cjs");
+      writeFileSync(
+        script,
+        `require('node:net').createServer(socket => socket.end()).listen(${port}, '127.0.0.1');`,
+      );
+      child = supervise([
+        join(dir, "bridge.lock"),
+        "--listen-port",
+        String(port),
+        process.execPath,
+        script,
+      ]);
+      await until(() => child.events.some((e) => e.event === "locked"));
+      child.stdin.write("S");
+      await until(() => child.events.some((e) => e.event === "listening"));
+    } finally {
+      if (child) {
+        child.stdin.end("Q");
+        await child.done;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "a foreign listener and misleading console text never satisfy ownership",
+  { skip: !existsSync(helper) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-foreign-"));
+    const server = createServer();
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const port = server.address().port;
+    let child;
+    try {
+      const script = join(dir, "misleading.cjs");
+      writeFileSync(
+        script,
+        `console.error('speech serve: speech.cpp changed, listening on http://127.0.0.1:${port}'); setInterval(() => {}, 1000);`,
+      );
+      child = supervise([
+        join(dir, "bridge.lock"),
+        "--listen-port",
+        String(port),
+        process.execPath,
+        script,
+      ]);
+      await until(() => child.events.some((e) => e.event === "locked"));
+      child.stdin.write("S");
+      await until(() => child.events.some((e) => e.event === "spawned"));
+      await delay(250);
+      assert.ok(!child.events.some((e) => e.event === "listening"));
+    } finally {
+      if (child) {
+        child.stdin.end("Q");
+        await child.done;
+      }
+      assert.ok(server.listening);
+      await new Promise((r) => server.close(r));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "port conflicts leave the unrelated server alive and never become ready",
+  { skip: !existsSync(join(runtimeDir, "build.json")) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-conflict-"));
+    const server = createServer((socket) => socket.end());
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const model = join(dir, "test.gguf");
+    writeFileSync(model, "invalid model");
+    const runtime = new SpeechRuntime({
+      dataDir: dir,
+      runtimeDir,
+      overrides: { mode: "bundled", model, ttsPort: server.address().port },
+    });
+    try {
+      await runtime.acquire();
+      await runtime.start();
+      assert.equal(runtime.status, "error");
+      assert.match(runtime.error, /ポート/);
+      assert.equal(runtime.childAlive, undefined);
+      await runtime.close();
+      assert.ok(server.listening);
+    } finally {
+      await runtime.close();
+      await new Promise((r) => server.close(r));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "invalid model child exit is reported while the data lock remains held",
+  { skip: !existsSync(join(runtimeDir, "build.json")) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-bad-model-"));
+    const model = join(dir, "test.gguf");
+    writeFileSync(model, "invalid model");
+    const server = createServer();
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const port = server.address().port;
+    await new Promise((r) => server.close(r));
+    const runtime = new SpeechRuntime({
+      dataDir: dir,
+      runtimeDir,
+      overrides: { mode: "bundled", model, ttsPort: port },
+      startupTimeout: 10000,
+    });
+    try {
+      await runtime.acquire();
+      await runtime.start();
+      assert.equal(runtime.status, "error");
+      assert.match(runtime.error, /停止/);
+      assert.throws(() => runtime.fetch(`http://127.0.0.1:${port}/health`));
+      const competitor = supervise([join(dir, "bridge.lock")]);
+      assert.equal(await competitor.done, 3);
+    } finally {
+      await runtime.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

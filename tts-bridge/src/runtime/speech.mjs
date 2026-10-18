@@ -1,0 +1,220 @@
+import { spawn } from "node:child_process";
+import {
+  accessSync,
+  constants,
+  mkdirSync,
+  statSync,
+  appendFileSync,
+  existsSync,
+  renameSync,
+} from "node:fs";
+import { join } from "node:path";
+import { createServer } from "node:net";
+import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
+import { RuntimeSettings } from "./settings.mjs";
+
+export class SpeechRuntime {
+  constructor({ dataDir, runtimeDir, overrides, startupTimeout = 180000 }) {
+    this.dataDir = dataDir;
+    this.settings = new RuntimeSettings(dataDir, overrides);
+    this.runtimeDir = runtimeDir;
+    this.startupTimeout = startupTimeout;
+    this.status =
+      this.settings.active.mode === "external" ? "external" : "stopped";
+    this.error = "";
+  }
+  snapshot() {
+    return {
+      active: this.settings.active,
+      saved: this.settings.saved,
+      status: this.status,
+      error: this.error,
+      restartRequired:
+        JSON.stringify(this.settings.active) !==
+        JSON.stringify(this.settings.saved),
+    };
+  }
+  provider(saved) {
+    return this.settings.active.mode === "bundled"
+      ? {
+          ...saved,
+          type: "irodori",
+          baseUrl: `http://127.0.0.1:${this.settings.active.ttsPort}`,
+        }
+      : saved;
+  }
+  fetch = (...args) => {
+    if (this.settings.active.mode === "bundled" && this.status !== "ready")
+      throw Error(this.error || "内蔵TTSは準備中です");
+    return fetch(...args);
+  };
+  log(event) {
+    // Only our fixed lifecycle messages are stored. Never persist upstream
+    // stdout/stderr: speech's startup output includes an admin access URL.
+    const dir = join(this.dataDir, "logs");
+    try {
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, "speech.log");
+      if (existsSync(path) && statSync(path).size > 1024 * 1024)
+        renameSync(path, `${path}.old`);
+      appendFileSync(path, `${new Date().toISOString()} ${event}\n`, {
+        mode: 0o600,
+      });
+    } catch {
+      /* A full disk must not break child cleanup. */
+    }
+  }
+  async acquire() {
+    const suffix = process.platform === "win32" ? ".exe" : "";
+    const active = this.settings.active;
+    const args = [join(this.dataDir, "bridge.lock")];
+    if (active.mode === "bundled")
+      args.push(
+        "--listen-port",
+        String(active.ttsPort),
+        join(this.runtimeDir, `speech${suffix}`),
+        "serve",
+        active.model,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(active.ttsPort),
+        "--irodori-compatible",
+        "--voices-dir",
+        join(this.dataDir, "voices"),
+      );
+    this.helper = spawn(
+      join(this.runtimeDir, `bridge-supervisor${suffix}`),
+      args,
+      { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+    );
+    this.helper.stdin.on("error", () => {});
+    this.closed = new Promise((resolve) => this.helper.once("close", resolve));
+    let locked = false;
+    const lockedPromise = new Promise((resolve, reject) => {
+      this.helper.once("error", () =>
+        reject(Error("起動管理プログラムを開始できません")),
+      );
+      this.helper.once("exit", () => {
+        if (!locked)
+          reject(
+            Error("同じ保存先のBridgeが起動中か、保存先にアクセスできません"),
+          );
+        else if (!this.closing) {
+          this.fail("起動管理プログラムが停止しました");
+          this.onFatal?.();
+        }
+      });
+      createInterface({ input: this.helper.stdout }).on("line", (line) => {
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (event.event === "locked") {
+          locked = true;
+          resolve();
+        }
+        if (event.event === "listening") this.listening = true;
+        if (event.event === "spawned") {
+          this.childAlive = true;
+          this.log("spawned");
+        }
+        if (["exited", "spawn-error"].includes(event.event)) {
+          this.childAlive = false;
+          if (!this.closing && this.status !== "error")
+            this.fail(
+              "内蔵TTSが停止しました。設定を確認してBridgeを再起動してください",
+            );
+        }
+      });
+    });
+    // Readiness comes from OS socket ownership, never localized/colorized text.
+    // Drain and discard upstream output, including its private admin URL.
+    this.helper.stderr.resume();
+    try {
+      await lockedPromise;
+    } catch (e) {
+      await this.close();
+      throw e;
+    }
+  }
+  fail(message) {
+    this.status = "error";
+    this.error = message;
+    this.log("error");
+  }
+  async start() {
+    if (this.settings.active.mode !== "bundled" || this.closing) return;
+    const { model, ttsPort } = this.settings.active;
+    try {
+      if (!model || !statSync(model).isFile()) throw Error();
+      accessSync(model, constants.R_OK);
+    } catch {
+      this.fail(
+        "GGUFモデルが見つからないか読み取れません。設定後に再起動してください",
+      );
+      return;
+    }
+    try {
+      await new Promise((resolve, reject) => {
+        const probe = createServer();
+        probe.once("error", reject);
+        probe.listen(ttsPort, "127.0.0.1", () => probe.close(resolve));
+      });
+    } catch {
+      this.fail(
+        "内蔵TTSのポートが使用中です。ポートを変更して再起動してください",
+      );
+      return;
+    }
+    if (this.closing) return;
+    mkdirSync(join(this.dataDir, "voices"), { recursive: true });
+    this.status = "starting";
+    this.log("starting");
+    this.helper.stdin.write("S");
+    const deadline = Date.now() + this.startupTimeout;
+    while (
+      !this.closing &&
+      this.status === "starting" &&
+      Date.now() < deadline
+    ) {
+      if (this.listening && this.childAlive) {
+        try {
+          const response = await fetch(`http://127.0.0.1:${ttsPort}/health`, {
+            signal: AbortSignal.timeout(1000),
+          });
+          await response.body?.cancel();
+          if (
+            response.ok &&
+            this.childAlive &&
+            !this.closing &&
+            this.status === "starting"
+          ) {
+            this.status = "ready";
+            this.log("ready");
+            return;
+          }
+        } catch {
+          /* Loading or startup failure; bounded by deadline. */
+        }
+      }
+      await delay(100);
+    }
+    if (!this.closing && this.status === "starting") {
+      this.fail(
+        "内蔵TTSの起動がタイムアウトしました。モデルとログを確認して再起動してください",
+      );
+      this.helper.stdin.write("T");
+    }
+  }
+  async close() {
+    this.closing = true;
+    if (!this.helper) return;
+    this.helper.stdin.end("Q");
+    await this.closed;
+    this.status = "stopped";
+  }
+}

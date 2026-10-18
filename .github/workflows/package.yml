@@ -1,0 +1,75 @@
+name: Portable packages
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: windows-2025
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: tts-bridge
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: tts-bridge/packaging/node-version
+          cache: npm
+          cache-dependency-path: |
+            tts-bridge/package-lock.json
+            tts-bridge/discord/package-lock.json
+      - name: Check native build target
+        run: node -e "if(process.platform !== '${{ matrix.platform }}' || process.arch !== '${{ matrix.arch }}') process.exit(1)"
+      - run: npm ci --no-audit --no-fund
+      - run: npm --prefix discord ci --no-audit --no-fund
+      - name: Check Bridge, Collector and release tag versions
+        run: npm run version:check
+      - name: Build pinned speech.cpp and process supervisor
+        run: npm run package:speech
+      - run: npm test
+      - name: Build SEA and audit package privacy
+        run: npm run package:build
+      - name: Test extracted package without Node on PATH
+        run: npm run package:smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trpg-voice-bridge-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            tts-bridge/dist/*.zip
+            tts-bridge/dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create draft prerelease for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Portable preview. Models must be supplied separately. macOS packages are not notarized; Windows packages are unsigned. See README.txt for startup instructions."

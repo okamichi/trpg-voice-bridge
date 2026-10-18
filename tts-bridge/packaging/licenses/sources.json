@@ -1,0 +1,31 @@
+[
+  {
+    "packages": [
+      "@snazzah/davey",
+      "@snazzah/davey-darwin-arm64",
+      "@snazzah/davey-win32-x64-msvc"
+    ],
+    "version": "0.1.12",
+    "file": "davey-LICENSE",
+    "source": "https://raw.githubusercontent.com/Snazzah/davey/a1e2e741bea06bc3b7167a5c3792844b8975993c/LICENSE",
+    "sha256": "90760006b6e6c76a67476de39bee25e42e584679eac5d608765355d5d54e8afa"
+  },
+  {
+    "packages": [
+      "@sapphire/async-queue"
+    ],
+    "version": "1.5.5",
+    "file": "sapphire-async-queue-LICENSE",
+    "source": "https://raw.githubusercontent.com/sapphiredev/utilities/36268acb83cc613e06836f6ebbdafeeba99c2365/LICENSE.md",
+    "sha256": "9a022e629657a7e9753e631ac112bb4260e71267b9ccff1fa72240eb167e2eeb"
+  },
+  {
+    "packages": [
+      "@sapphire/snowflake"
+    ],
+    "version": "3.5.5",
+    "file": "sapphire-snowflake-LICENSE",
+    "source": "https://raw.githubusercontent.com/sapphiredev/utilities/dd52b66fc63099b2f95163eebd4df23c26b1cd16/LICENSE.md",
+    "sha256": "9a022e629657a7e9753e631ac112bb4260e71267b9ccff1fa72240eb167e2eeb"
+  }
+]

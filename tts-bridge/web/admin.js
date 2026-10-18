@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+let runtimeInitialized = false;
 let accepting = false,
   provider,
   chatVoiceRegistrationEnabled = false,
@@ -32,6 +33,28 @@ async function run(fn) {
 }
 async function refresh() {
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
+  if (d.runtime) {
+    $("runtimeSection").hidden = false;
+    const r = d.runtime;
+    const states = {
+      external: "外部サーバー",
+      stopped: "停止",
+      starting: "モデル読込中",
+      ready: "準備完了",
+      error: "起動失敗",
+    };
+    $("runtimeStatus").textContent =
+      `現在: ${states[r.status] ?? r.status} / ${r.active.mode} / ${r.active.model || "モデル指定なし"} / ポート ${r.active.ttsPort}${r.error ? " — " + r.error : ""}${r.restartRequired ? "（保存済み設定の反映には再起動が必要です）" : ""}`;
+    if (!runtimeInitialized) {
+      $("runtimeMode").value = r.saved.mode;
+      $("runtimeModel").value = r.saved.model;
+      $("runtimePort").value = r.saved.ttsPort;
+      runtimeInitialized = true;
+    }
+    $("providerUrl").disabled = r.active.mode === "bundled";
+    $("providerForm").querySelector("button").disabled =
+      r.active.mode === "bundled";
+  }
   const registrations = (d.voiceCommands ?? []).filter(
     (x) => x.status === "failed",
   );
@@ -46,7 +69,7 @@ async function refresh() {
   $("toggle").textContent = accepting ? "読み上げ停止" : "読み上げ開始";
   $("toggle").disabled = false;
   $("connection").textContent =
-    `Irodori-TTS: ${d.tts.status === "unreachable" ? "接続できません" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
+    `Irodori-TTS: ${["unreachable", "error", "starting", "stopped"].includes(d.tts.status) ? "未接続・準備中" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
   const collectors = d.collectors.length
     ? d.collectors.map(
         (c) =>
@@ -307,3 +330,21 @@ await run(async () => {
     }
   }
 });
+
+$("runtimeForm").onsubmit = (event) => {
+  event.preventDefault();
+  run(async () => {
+    await api("runtime", "PUT", {
+      mode: $("runtimeMode").value,
+      model: $("runtimeModel").value.trim(),
+      ttsPort: Number($("runtimePort").value),
+    });
+    await refresh();
+  });
+};
+$("shutdownBridge").onclick = () =>
+  run(async () => {
+    await api("shutdown", "POST", {});
+    $("runtimeStatus").textContent =
+      "Bridgeを終了しています。この画面を閉じてからBridgeを起動し直してください。";
+  });

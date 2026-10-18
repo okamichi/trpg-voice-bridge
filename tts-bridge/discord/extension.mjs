@@ -1,4 +1,5 @@
-import { createRequire } from "node:module";
+import { dependenciesInstalled } from "./dependencies.mjs";
+export { dependenciesInstalled } from "./dependencies.mjs";
 import {
   readFileSync,
   writeFileSync,
@@ -11,7 +12,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { createBot } from "./bot.mjs";
 import { toDiscordPcm } from "./pcm.mjs";
 
-const require = createRequire(import.meta.url);
 const fail = (message, status = 422) => {
   throw Object.assign(new Error(message), { status });
 };
@@ -33,15 +33,6 @@ const defaultVoice = {
   steps: 20,
   speed: 1,
 };
-export function dependenciesInstalled() {
-  try {
-    for (const name of ["discord.js", "@discordjs/voice", "opusscript"])
-      require.resolve(name);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function createExtension({
   engine,
@@ -396,6 +387,7 @@ export function createExtension({
     id: "discord",
     title: "Discord Bot",
     adminScript: new URL("./admin.js", import.meta.url),
+    adminAsset: "discord/admin.js",
     ready,
     voiceProfileUses: () =>
       settings.greeting.voiceProfileId

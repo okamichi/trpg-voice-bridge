@@ -61,6 +61,34 @@
         </p>
         <div id="voiceCommandDiagnostics"></div>
       </section>
+      <section id="runtimeSection" hidden>
+        <h2>TTSの起動設定</h2>
+        <p id="runtimeStatus"></p>
+        <form id="runtimeForm">
+          <label
+            >起動方式<select id="runtimeMode">
+              <option value="external">外部サーバー</option>
+              <option value="bundled">内蔵speech.cpp</option>
+            </select></label
+          >
+          <label
+            >GGUFモデルの絶対パス<input id="runtimeModel" type="text"
+          /></label>
+          <label
+            >内蔵TTSのポート<input
+              id="runtimePort"
+              type="number"
+              min="1"
+              max="65535"
+              required
+          /></label>
+          <button>次回起動の設定を保存</button>
+        </form>
+        <p>
+          保存した設定はBridgeを再起動すると反映されます。モデルは別途用意してください。声は保存先のvoicesフォルダーに保存されます。
+        </p>
+        <button id="shutdownBridge" type="button">Bridgeを終了</button>
+      </section>
       <section>
         <h2>Irodori接続先</h2>
         <form id="providerForm">

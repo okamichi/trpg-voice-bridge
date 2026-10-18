@@ -4,3 +4,5 @@ verification/
 test-results/
 playwright-report/
 *.log
+.packaging/
+dist/
