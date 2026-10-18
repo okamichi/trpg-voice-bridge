@@ -18,6 +18,12 @@ const pins = JSON.parse(
 );
 mkdirSync(scratch, { recursive: true });
 const source = join(scratch, "pinned-speech");
+// Git Bash also puts GNU tar on PATH; it treats D:\... as a remote archive.
+// Use Windows' native bsdtar for Windows paths.
+const tar =
+  process.platform === "win32"
+    ? join(process.env.SystemRoot ?? "C:/Windows", "System32", "tar.exe")
+    : "tar";
 for (const [name, pin] of Object.entries(pins)) {
   const archive = join(scratch, `${name}-${pin.commit}.tar.gz`);
   if (!existsSync(archive)) {
@@ -40,7 +46,7 @@ mkdirSync(source, { recursive: true });
 for (const [name, pin] of Object.entries(pins)) {
   const dest = name === "speech" ? source : join(source, "ggml");
   mkdirSync(dest, { recursive: true });
-  execFileSync("tar", [
+  execFileSync(tar, [
     "-xzf",
     join(scratch, `${name}-${pin.commit}.tar.gz`),
     "-C",

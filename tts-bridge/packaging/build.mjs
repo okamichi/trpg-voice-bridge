@@ -11,12 +11,12 @@ import {
   chmodSync,
   existsSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { initialConfig } from "../src/store.mjs";
-import { assertPackagePrivacy } from "./privacy.mjs";
+import { assertPackagePrivacy, snapshotUpstreamBinaries } from "./privacy.mjs";
 import { supplementLicenses } from "./licenses.mjs";
 import { checkProjectVersion } from "./version.mjs";
 
@@ -59,6 +59,10 @@ execFileSync(
   process.execPath,
   [npmCli, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
   { cwd: runtime, stdio: "inherit" },
+);
+const upstreamBinaries = snapshotUpstreamBinaries(
+  join(runtime, "node_modules"),
+  relative(stage, join(runtime, "node_modules")),
 );
 
 const speechDir = join(root, ".packaging/speech-runtime");
@@ -183,7 +187,7 @@ writeFileSync(
   `Node.js: Node.js-LICENSE\nBundled ws and external Discord production dependencies:\n${notices.sort().join("\n")}\nSupplement sources: supplemental-license-sources.json\nspeech.cpp and ggml: ../runtime/speech/speech.cpp-LICENSE, ../runtime/speech/ggml-LICENSE\nspeech.cpp vendor notices: ../runtime/speech/licenses/\nVersions and integrity: runtime/discord/package-lock.json and build-info.json\n`,
 );
 execFileSync(exe, ["--self-test"], { cwd: work, stdio: "inherit" });
-assertPackagePrivacy(stage, root);
+assertPackagePrivacy(stage, root, upstreamBinaries);
 // Only replace this script's generated target directory after a successful build.
 mkdirSync(dirname(destination), { recursive: true });
 rmSync(destination, { recursive: true, force: true });
