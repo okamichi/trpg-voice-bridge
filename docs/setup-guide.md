@@ -187,4 +187,10 @@ TTS_DATA_DIR=~/trpg/campaign-a/data TTS_CONFIG_FILE=~/trpg/campaign-a/config.jso
 
 卓のデータを分ける場合は、TTSサーバー側も`--voices-dir`を合わせて卓ごとに別にすることが望ましいです。
 
+ダウンロードしたアプリ（`trpg-voice-bridge`）を使う場合は、`--data-dir`で保存先を卓ごとに指定できます。内蔵TTS（speech.cpp）の起動方式・モデルのパス・ポートは保存先の`runtime.json`に、参照音声は保存先の`voices/`に保存されるため、`--voices-dir`を別に指定する必要はありません。同じ保存先のBridgeは同時に1つだけ起動できます。
+
+```sh
+./trpg-voice-bridge --data-dir ~/trpg/campaign-a/data
+```
+
 `TTS_CONFIG_FILE`を読むのは、そのディレクトリに`bridge.sqlite`を初めて作るときと、管理画面の「設定を初期値に戻す」を押したときだけです。後者で戻るのはキャラ・声・紐付けで、認証情報と接続設定は残ります。既存の卓では、ファイルを書き換えて再起動しても反映されません。

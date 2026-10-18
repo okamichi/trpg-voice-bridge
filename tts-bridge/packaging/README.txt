@@ -1,9 +1,16 @@
 TRPG Voice Bridge — ポータブルプレビュー
 
-speech.cppを同梱しています。モデルは別途用意してください。モデルの自動ダウンロードは行いません。
+speech.cppを同梱しています。モデルは別途用意してください。Bridgeはモデルを自動ダウンロードしません。
 初期設定は外部Irodori互換TTSへの接続です。管理画面で内蔵TTSとGGUFの絶対パスを保存し、Bridgeを再起動してください。
 Node.js / npmのインストールは利用者には不要です。
 trpg-voice-bridgeとruntime/、collector/を同じ配置のまま保管してください。
+
+モデルの取得（例: Irodori-TTS v4.1 Small のQ8_0、約1.2GB）:
+  macOS: SPEECH_MODEL_DIR="$PWD/models" ./runtime/speech/speech pull irodori-tts:q8_0
+  完了すると保存したGGUFの絶対パスを表示します。管理画面の「GGUFモデルの絶対パス」に貼り付けてください。
+  SPEECH_MODEL_DIRを省略すると、OSのキャッシュフォルダへ保存します。
+  ほかのモデルは ./runtime/speech/speech models で一覧できます。
+  irodori-tts-large（Irodori-TTS v4-Large）はGemmaの利用規約に従います。
 
 起動:
   macOS: ターミナルで ./trpg-voice-bridge
@@ -33,7 +40,7 @@ runtime.jsonに起動方式・モデルパス・TTSポートを保存します�
 外部TTSから声を移す場合は、両TTSを停止し、ID.wavをvoices/へコピーして同じ参照音声IDを使います。
 上書き前にバックアップを取り、移行元のファイルを残して試聴で確認してください。
 外部TTSの参照音声はTTSサーバー側で保存・バックアップしてください。
-既存データは自動移行しません。同じ保存先で複数のBridgeを起動しないでください。
+既存データは自動移行しません。同じ保存先のBridgeは同時に1つだけ起動でき、2つ目は起動を拒否します。
 TTS_DATA_DIR / TTS_BRIDGE_PORT / TTS_CONFIG_FILE 等の既存環境変数も利用できます。
 
 Collector:

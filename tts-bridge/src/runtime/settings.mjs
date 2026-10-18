@@ -1,20 +1,25 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 
+// Marks a fixed message written for users. The launcher prints only these, so
+// library errors that may carry secrets never reach the console.
+export const exposed = (message) =>
+  Object.assign(Error(message), { expose: true });
+
 export function validateRuntime(value) {
   if (!value || !["external", "bundled"].includes(value.mode))
-    throw Error("TTSモードが不正です");
+    throw exposed("TTSモードが不正です");
   if (
     typeof value.model !== "string" ||
     (value.model && (!isAbsolute(value.model) || !/\.gguf$/i.test(value.model)))
   )
-    throw Error("モデルはGGUFファイルの絶対パスを指定してください");
+    throw exposed("モデルはGGUFファイルの絶対パスを指定してください");
   if (
     !Number.isInteger(value.ttsPort) ||
     value.ttsPort < 1 ||
     value.ttsPort > 65535
   )
-    throw Error("TTSポートは1～65535で指定してください");
+    throw exposed("TTSポートは1～65535で指定してください");
   return { mode: value.mode, model: value.model, ttsPort: value.ttsPort };
 }
 
@@ -25,7 +30,8 @@ export class RuntimeSettings {
     try {
       this.saved = validateRuntime(JSON.parse(readFileSync(this.path, "utf8")));
     } catch (e) {
-      if (e.code !== "ENOENT") throw Error("runtime.jsonを確認してください");
+      if (e.code !== "ENOENT")
+        throw exposed(`runtime.jsonを確認してください（${this.path}）`);
       this.saved = { mode: "external", model: "", ttsPort: 18088 };
     }
     this.active = validateRuntime({ ...this.saved, ...overrides });

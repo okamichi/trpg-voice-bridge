@@ -383,12 +383,35 @@ try {
       "--port",
       String(await unusedPort()),
     ],
-    { cwd, env, stdio: "ignore" },
+    { cwd, env, stdio: ["ignore", "ignore", "pipe"] },
   );
+  let duplicateError = "";
+  duplicate.stderr.on("data", (s) => (duplicateError += s));
   const duplicateCode = await new Promise((resolve) =>
-    duplicate.once("exit", resolve),
+    duplicate.once("close", resolve),
   );
   assert.equal(duplicateCode, 1);
+  assert.match(duplicateError, /同じ保存先のBridge/);
+  assert.ok((await fetch(`${base}/healthz`)).ok);
+  // A busy Bridge port is named instead of the generic startup failure.
+  const busyPort = spawn(
+    exe,
+    [
+      "--no-browser",
+      "--data-dir",
+      join(temporary, "ポート競合 data"),
+      "--port",
+      String(port),
+    ],
+    { cwd, env, stdio: ["ignore", "ignore", "pipe"] },
+  );
+  let busyPortError = "";
+  busyPort.stderr.on("data", (s) => (busyPortError += s));
+  assert.equal(
+    await new Promise((resolve) => busyPort.once("close", resolve)),
+    1,
+  );
+  assert.match(busyPortError, new RegExp(`ポート${port}は使用中`));
   assert.ok((await fetch(`${base}/healthz`)).ok);
   await stop();
   await start();

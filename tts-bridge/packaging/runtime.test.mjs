@@ -331,3 +331,27 @@ test(
     }
   },
 );
+
+test(
+  "a second runtime on the same data directory gets a user-facing lock message",
+  { skip: !existsSync(join(runtimeDir, "build.json")) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-lock 保存先-"));
+    const first = new SpeechRuntime({ dataDir: dir, runtimeDir });
+    const second = new SpeechRuntime({ dataDir: dir, runtimeDir });
+    try {
+      await first.acquire();
+      await assert.rejects(
+        second.acquire(),
+        (e) =>
+          e.expose === true &&
+          e.message.includes("同じ保存先のBridge") &&
+          e.message.includes(dir),
+      );
+    } finally {
+      await second.close();
+      await first.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

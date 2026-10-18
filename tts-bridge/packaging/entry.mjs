@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
 import { SpeechRuntime } from "../src/runtime/speech.mjs";
+import { exposed } from "../src/runtime/settings.mjs";
 import { startBridge } from "../src/runtime/launcher.mjs";
 import { readAsset } from "../src/runtime/assets.mjs";
 import { createExtension } from "../discord/extension.mjs";
@@ -89,7 +90,8 @@ async function main() {
     return;
   }
   const port = Number(values.port ?? process.env.TTS_BRIDGE_PORT ?? 8090);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error("port");
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw exposed("Bridgeのポートは1～65535で指定してください");
   const root =
     process.platform === "darwin"
       ? join(homedir(), "Library/Application Support/TRPG-Voice-Bridge")
@@ -157,10 +159,14 @@ async function main() {
     },
   });
 }
-main().catch(() => {
+main().catch((error) => {
   // Do not print arbitrary configuration / library errors containing secrets.
   console.error(
-    "Bridgeを起動できませんでした。ポート・保存先・設定・同梱runtimeを確認してください。",
+    error?.expose
+      ? error.message
+      : error?.code === "EADDRINUSE"
+        ? `Bridgeのポート${error.port ?? ""}は使用中です。--port で別のポートを指定してください。`
+        : "Bridgeを起動できませんでした。ポート・保存先・設定・同梱runtimeを確認してください。",
   );
   process.exitCode = 1;
 });

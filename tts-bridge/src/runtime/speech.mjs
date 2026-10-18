@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
-import { RuntimeSettings } from "./settings.mjs";
+import { RuntimeSettings, exposed } from "./settings.mjs";
 
 export class SpeechRuntime {
   constructor({ dataDir, runtimeDir, overrides, startupTimeout = 180000 }) {
@@ -94,12 +94,18 @@ export class SpeechRuntime {
     let locked = false;
     const lockedPromise = new Promise((resolve, reject) => {
       this.helper.once("error", () =>
-        reject(Error("起動管理プログラムを開始できません")),
+        reject(
+          exposed(
+            "同梱の起動管理プログラムを開始できません。展開したフォルダのruntime/speechを確認してください。",
+          ),
+        ),
       );
       this.helper.once("exit", () => {
         if (!locked)
           reject(
-            Error("同じ保存先のBridgeが起動中か、保存先にアクセスできません"),
+            exposed(
+              `同じ保存先のBridgeがすでに起動しているか、保存先にアクセスできません（保存先: ${this.dataDir}）。起動中のBridgeを終了するか、--data-dir で別の保存先を指定してください。`,
+            ),
           );
         else if (!this.closing) {
           this.fail("起動管理プログラムが停止しました");
