@@ -71,17 +71,19 @@
               <option value="bundled">内蔵speech.cpp</option>
             </select></label
           >
-          <label
-            >GGUFモデルの絶対パス<input id="runtimeModel" type="text"
-          /></label>
-          <label
-            >内蔵TTSのポート<input
-              id="runtimePort"
-              type="number"
-              min="1"
-              max="65535"
-              required
-          /></label>
+          <div id="bundledFields">
+            <label
+              >GGUFモデルの絶対パス<input id="runtimeModel" type="text"
+            /></label>
+            <label
+              >内蔵TTSのポート<input
+                id="runtimePort"
+                type="number"
+                min="1"
+                max="65535"
+                required
+            /></label>
+          </div>
           <button>次回起動の設定を保存</button>
         </form>
         <p>
@@ -89,13 +91,16 @@
         </p>
         <button id="shutdownBridge" type="button">Bridgeを終了</button>
       </section>
-      <section>
+      <section id="providerSection">
         <h2>Irodori接続先</h2>
         <form id="providerForm">
           <label>接続先URL<input id="providerUrl" type="url" required /></label
           ><button>接続先を保存</button
           ><button type="button" id="testConnection">接続テスト</button>
         </form>
+        <p id="providerNote" hidden>
+          外部サーバーで起動し直すと変更できます。今は内蔵TTSに接続しています。
+        </p>
       </section>
       <section>
         <h2>Playerの表示</h2>

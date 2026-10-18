@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
-let runtimeInitialized = false;
+let runtimeInitialized = false,
+  runtimeState;
 let accepting = false,
   provider,
   chatVoiceRegistrationEnabled = false,
@@ -31,11 +32,25 @@ async function run(fn) {
     $("notice").textContent = e.message;
   }
 }
+// The menu picks the next start's mode; the active mode decides the connection.
+function applyRuntimeView() {
+  if (!runtimeState) return;
+  const bundled = runtimeState.active.mode === "bundled";
+  $("bundledFields").hidden = $("runtimeMode").value !== "bundled";
+  $("providerSection").hidden = $("runtimeMode").value !== "external";
+  $("providerUrl").disabled = bundled;
+  $("providerForm").querySelector("button").disabled = bundled;
+  $("providerNote").hidden = !bundled;
+}
 async function refresh() {
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
   if (d.runtime) {
     $("runtimeSection").hidden = false;
-    const r = d.runtime;
+    const r = (runtimeState = d.runtime);
+    const target =
+      r.active.mode === "bundled"
+        ? `http://127.0.0.1:${r.active.ttsPort}`
+        : (provider?.baseUrl ?? "");
     const states = {
       external: "外部サーバー",
       stopped: "停止",
@@ -44,16 +59,14 @@ async function refresh() {
       error: "起動失敗",
     };
     $("runtimeStatus").textContent =
-      `現在: ${states[r.status] ?? r.status} / ${r.active.mode} / ${r.active.model || "モデル指定なし"} / ポート ${r.active.ttsPort}${r.error ? " — " + r.error : ""}${r.restartRequired ? "（保存済み設定の反映には再起動が必要です）" : ""}`;
+      `現在: ${states[r.status] ?? r.status} / ${r.active.mode} / ${r.active.model || "モデル指定なし"} / ポート ${r.active.ttsPort} / 接続先 ${target}${r.error ? " — " + r.error : ""}${r.restartRequired ? "（保存済み設定の反映には再起動が必要です）" : ""}`;
     if (!runtimeInitialized) {
       $("runtimeMode").value = r.saved.mode;
       $("runtimeModel").value = r.saved.model;
       $("runtimePort").value = r.saved.ttsPort;
       runtimeInitialized = true;
     }
-    $("providerUrl").disabled = r.active.mode === "bundled";
-    $("providerForm").querySelector("button").disabled =
-      r.active.mode === "bundled";
+    applyRuntimeView();
   }
   const registrations = (d.voiceCommands ?? []).filter(
     (x) => x.status === "failed",
@@ -331,6 +344,7 @@ await run(async () => {
   }
 });
 
+$("runtimeMode").onchange = applyRuntimeView;
 $("runtimeForm").onsubmit = (event) => {
   event.preventDefault();
   run(async () => {

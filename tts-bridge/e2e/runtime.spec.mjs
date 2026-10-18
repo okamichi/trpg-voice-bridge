@@ -27,12 +27,26 @@ test("bundled runtime UI saves restart settings while keeping active mode and ex
     await page.goto(url);
     await page.getByText("詳細設定", { exact: true }).click();
     await expect(page.locator("#runtimeStatus")).toContainText("起動失敗");
+    await expect(page.locator("#runtimeStatus")).toContainText(
+      "接続先 http://127.0.0.1:18088",
+    );
+    // The saved mode is external, so the external URL is shown but locked
+    // while the active bundled runtime owns the connection.
+    await expect(page.locator("#runtimeMode")).toHaveValue("external");
+    await expect(page.locator("#providerSection")).toBeVisible();
+    await expect(page.locator("#providerNote")).toBeVisible();
+    await expect(page.locator("#bundledFields")).toBeHidden();
     await expect(page.locator("#providerUrl")).toBeDisabled();
     await expect(page.locator("#providerUrl")).toHaveValue(
       app.store.config.provider.baseUrl,
     );
-    await page.locator("#runtimeMode").selectOption("external");
+    await page.locator("#runtimeMode").selectOption("bundled");
+    await expect(page.locator("#bundledFields")).toBeVisible();
+    await expect(page.locator("#providerSection")).toBeHidden();
     await page.locator("#runtimePort").fill("18123");
+    await page.locator("#runtimeMode").selectOption("external");
+    await expect(page.locator("#bundledFields")).toBeHidden();
+    await expect(page.locator("#providerSection")).toBeVisible();
     await page.getByRole("button", { name: "次回起動の設定を保存" }).click();
     await expect(page.locator("#runtimeStatus")).toContainText("再起動が必要");
     expect(runtime.settings.active.mode).toBe("bundled");
