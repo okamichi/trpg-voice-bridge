@@ -79,8 +79,6 @@ if (windows) {
     .map((path) => `/clang:-ffile-prefix-map="${path}=source/"`)
     .join(" ");
   config.push(
-    "-G",
-    "Visual Studio 17 2022",
     "-T",
     "ClangCL",
     "-A",
