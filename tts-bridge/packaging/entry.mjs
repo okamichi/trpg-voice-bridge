@@ -73,11 +73,12 @@ async function main() {
       tts: { type: "string" },
       model: { type: "string" },
       "tts-port": { type: "string" },
+      "tts-backend": { type: "string" },
     },
   });
   if (values.help) {
     console.log(
-      "TRPG Voice Bridge (bundled TTS preview)\n--help --version --no-browser --data-dir <path> --port <1-65535> --self-test\n--tts <external|bundled> --model <absolute.gguf> --tts-port <1-65535>",
+      "TRPG Voice Bridge (bundled TTS preview)\n--help --version --no-browser --data-dir <path> --port <1-65535> --self-test\n--tts <external|bundled> --model <absolute.gguf> --tts-port <1-65535>\n--tts-backend <vulkan|cpu> (Windows)",
     );
     return;
   }
@@ -114,6 +115,9 @@ async function main() {
       ...(values.model !== undefined ? { model: values.model } : {}),
       ...(values["tts-port"] !== undefined
         ? { ttsPort: Number(values["tts-port"]) }
+        : {}),
+      ...(values["tts-backend"] !== undefined
+        ? { backend: values["tts-backend"] }
         : {}),
     },
   });

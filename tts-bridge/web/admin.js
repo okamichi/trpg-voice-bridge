@@ -32,12 +32,22 @@ async function run(fn) {
     $("notice").textContent = e.message;
   }
 }
+// A menu value is "external" or "bundled:<backend>". The Bridge lists the
+// builds its own platform carries: Windows has Vulkan and CPU, macOS one.
+function runtimeLabel(mode, backend, backends) {
+  if (mode === "external") return "外部サーバー";
+  const names = { vulkan: "Vulkan", cpu: "CPU" };
+  return backends.length > 1
+    ? `内蔵speech.cpp（${names[backend] ?? backend}）`
+    : "内蔵speech.cpp";
+}
 // The menu picks the next start's mode; the active mode decides the connection.
 function applyRuntimeView() {
   if (!runtimeState) return;
   const bundled = runtimeState.active.mode === "bundled";
-  $("bundledFields").hidden = $("runtimeMode").value !== "bundled";
-  $("providerSection").hidden = $("runtimeMode").value !== "external";
+  const selected = $("runtimeMode").value.startsWith("bundled");
+  $("bundledFields").hidden = !selected;
+  $("providerSection").hidden = selected;
   $("providerUrl").disabled = bundled;
   $("providerForm").querySelector("button").disabled = bundled;
   $("providerNote").hidden = !bundled;
@@ -58,10 +68,26 @@ async function refresh() {
       ready: "準備完了",
       error: "起動失敗",
     };
+    const parts =
+      r.active.mode === "bundled"
+        ? [
+            states[r.status] ?? r.status,
+            runtimeLabel("bundled", r.active.backend, r.backends),
+            r.active.model || "モデル指定なし",
+            `ポート ${r.active.ttsPort}`,
+          ]
+        : [states.external];
     $("runtimeStatus").textContent =
-      `現在: ${states[r.status] ?? r.status} / ${r.active.mode} / ${r.active.model || "モデル指定なし"} / ポート ${r.active.ttsPort} / 接続先 ${target}${r.error ? " — " + r.error : ""}${r.restartRequired ? "（保存済み設定の反映には再起動が必要です）" : ""}`;
+      `現在: ${[...parts, `接続先 ${target}`].join(" / ")}${r.error ? " — " + r.error : ""}${r.restartRequired ? "（保存済み設定の反映には再起動が必要です）" : ""}`;
     if (!runtimeInitialized) {
-      $("runtimeMode").value = r.saved.mode;
+      for (const backend of r.backends) {
+        const option = document.createElement("option");
+        option.value = `bundled:${backend}`;
+        option.textContent = runtimeLabel("bundled", backend, r.backends);
+        $("runtimeMode").append(option);
+      }
+      $("runtimeMode").value =
+        r.saved.mode === "bundled" ? `bundled:${r.saved.backend}` : "external";
       $("runtimeModel").value = r.saved.model;
       $("runtimePort").value = r.saved.ttsPort;
       runtimeInitialized = true;
@@ -348,8 +374,12 @@ $("runtimeMode").onchange = applyRuntimeView;
 $("runtimeForm").onsubmit = (event) => {
   event.preventDefault();
   run(async () => {
+    // The external mode keeps the last bundled build for a later switch back.
+    const [mode, backend = runtimeState.saved.backend] =
+      $("runtimeMode").value.split(":");
     await api("runtime", "PUT", {
-      mode: $("runtimeMode").value,
+      mode,
+      backend,
       model: $("runtimeModel").value.trim(),
       ttsPort: Number($("runtimePort").value),
     });

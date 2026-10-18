@@ -42,6 +42,9 @@ int wmain(int argc, wchar_t **argv) {
     if (argc > 4 && std::wstring(argv[2]) == L"--listen-port") { port = _wtoi(argv[3]); commandIndex = 4; }
     bool listening = false;
     SetConsoleCtrlHandler(consoleHandler, TRUE);
+    // The child inherits this mode: a missing DLL (the Vulkan loader) ends it
+    // with STATUS_DLL_NOT_FOUND instead of a dialog that blocks until timeout.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     HANDLE lock = CreateFileW(argv[1], GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (lock == INVALID_HANDLE_VALUE) { std::puts("{\"event\":\"lock-error\"}"); return 3; }
     HANDLE job = CreateJobObjectW(nullptr, nullptr);

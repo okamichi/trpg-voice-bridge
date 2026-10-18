@@ -14,10 +14,28 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { RuntimeSettings, exposed } from "./settings.mjs";
 
+// Windows' STATUS_DLL_NOT_FOUND. The Vulkan build cannot start without the
+// Vulkan loader, vulkan-1.dll, which GPU drivers install.
+const DLL_NOT_FOUND = 0xc0000135;
+
+export function stopMessage(code, backend) {
+  if (backend === "vulkan" && code === DLL_NOT_FOUND)
+    return "Vulkanが見つかりません。GPUドライバを入れるか、起動方式で「内蔵speech.cpp（CPU）」を選んでBridgeを再起動してください";
+  if (backend === "vulkan")
+    return "内蔵TTSが停止しました。設定を確認してBridgeを再起動してください。GPUを使えない場合は、起動方式で「内蔵speech.cpp（CPU）」を選んでください";
+  return "内蔵TTSが停止しました。設定を確認してBridgeを再起動してください";
+}
+
 export class SpeechRuntime {
-  constructor({ dataDir, runtimeDir, overrides, startupTimeout = 180000 }) {
+  constructor({
+    dataDir,
+    runtimeDir,
+    overrides,
+    backends,
+    startupTimeout = 180000,
+  }) {
     this.dataDir = dataDir;
-    this.settings = new RuntimeSettings(dataDir, overrides);
+    this.settings = new RuntimeSettings(dataDir, overrides, backends);
     this.runtimeDir = runtimeDir;
     this.startupTimeout = startupTimeout;
     this.status =
@@ -28,6 +46,7 @@ export class SpeechRuntime {
     return {
       active: this.settings.active,
       saved: this.settings.saved,
+      backends: this.settings.backends,
       status: this.status,
       error: this.error,
       restartRequired:
@@ -65,25 +84,34 @@ export class SpeechRuntime {
       /* A full disk must not break child cleanup. */
     }
   }
+  // The supervisor's arguments after the lock file, for the bundled mode.
+  speechCommand() {
+    const suffix = process.platform === "win32" ? ".exe" : "";
+    const { model, ttsPort, backend } = this.settings.active;
+    const vulkan = backend === "vulkan";
+    return [
+      "--listen-port",
+      String(ttsPort),
+      join(this.runtimeDir, `${vulkan ? "speech-vulkan" : "speech"}${suffix}`),
+      "serve",
+      model,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(ttsPort),
+      // A chosen Vulkan build fails without a GPU instead of silently running
+      // on the CPU, which cannot speak a line within seconds.
+      ...(vulkan ? ["--device", "gpu"] : []),
+      "--irodori-compatible",
+      "--voices-dir",
+      join(this.dataDir, "voices"),
+    ];
+  }
   async acquire() {
     const suffix = process.platform === "win32" ? ".exe" : "";
-    const active = this.settings.active;
     const args = [join(this.dataDir, "bridge.lock")];
-    if (active.mode === "bundled")
-      args.push(
-        "--listen-port",
-        String(active.ttsPort),
-        join(this.runtimeDir, `speech${suffix}`),
-        "serve",
-        active.model,
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(active.ttsPort),
-        "--irodori-compatible",
-        "--voices-dir",
-        join(this.dataDir, "voices"),
-      );
+    if (this.settings.active.mode === "bundled")
+      args.push(...this.speechCommand());
     this.helper = spawn(
       join(this.runtimeDir, `bridge-supervisor${suffix}`),
       args,
@@ -131,9 +159,7 @@ export class SpeechRuntime {
         if (["exited", "spawn-error"].includes(event.event)) {
           this.childAlive = false;
           if (!this.closing && this.status !== "error")
-            this.fail(
-              "内蔵TTSが停止しました。設定を確認してBridgeを再起動してください",
-            );
+            this.fail(stopMessage(event.code, this.settings.active.backend));
         }
       });
     });

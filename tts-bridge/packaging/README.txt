@@ -26,6 +26,7 @@ trpg-voice-bridgeとruntime/、collector/を同じ配置のまま保管してく
   --tts <external|bundled>  今回だけ起動方式を指定
   --model <absolute.gguf>   今回だけGGUFモデルの絶対パスを指定
   --tts-port <1-65535>      今回だけ内蔵TTSポートを指定（既定18088）
+  --tts-backend <vulkan|cpu>  Windowsで今回だけ内蔵TTSの種類を指定
   --no-browser         管理画面を手動で開く
   --self-test          SQLite・Discord依存・PCM→Opus変換の診断（通信しません）
 

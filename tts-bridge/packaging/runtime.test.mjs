@@ -13,8 +13,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
-import { RuntimeSettings } from "../src/runtime/settings.mjs";
-import { SpeechRuntime } from "../src/runtime/speech.mjs";
+import { RuntimeSettings, platformBackends } from "../src/runtime/settings.mjs";
+import { SpeechRuntime, stopMessage } from "../src/runtime/speech.mjs";
 import { createApp } from "../src/http.mjs";
 import { initialConfig } from "../src/store.mjs";
 
@@ -42,6 +42,60 @@ test("runtime settings preserve saved values under CLI overrides and reject inva
       { ttsPort: "123" },
     ])
       assert.throws(() => settings.save({ ...settings.saved, ...invalid }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runtime builds follow the platform and reject another platform's build", () => {
+  assert.deepEqual(platformBackends("win32"), ["vulkan", "cpu"]);
+  assert.deepEqual(platformBackends("darwin"), ["metal"]);
+  const dir = mkdtempSync(join(tmpdir(), "runtime-backend-"));
+  const windows = ["vulkan", "cpu"];
+  try {
+    const settings = new RuntimeSettings(dir, {}, windows);
+    assert.equal(settings.saved.backend, "vulkan");
+    settings.save({ ...settings.saved, mode: "bundled", backend: "cpu" });
+    assert.equal(new RuntimeSettings(dir, {}, windows).active.backend, "cpu");
+    const overridden = new RuntimeSettings(dir, { backend: "vulkan" }, windows);
+    assert.equal(overridden.active.backend, "vulkan");
+    assert.equal(overridden.saved.backend, "cpu");
+    assert.throws(
+      () => settings.save({ ...settings.saved, backend: "metal" }),
+      (e) => e.expose === true,
+    );
+    // A file saved before the builds were named takes the platform's default.
+    writeFileSync(
+      join(dir, "runtime.json"),
+      JSON.stringify({ mode: "bundled", model: "", ttsPort: 18088 }),
+    );
+    assert.equal(new RuntimeSettings(dir, {}, windows).saved.backend, "vulkan");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the Vulkan build runs on the GPU and a missing loader is named", () => {
+  const dir = mkdtempSync(join(tmpdir(), "runtime-command-"));
+  const runtimeDir = join(dir, "runtime");
+  const start = (backend) =>
+    new SpeechRuntime({
+      dataDir: dir,
+      runtimeDir,
+      overrides: { mode: "bundled", model: join(dir, "model.gguf"), backend },
+      backends: ["vulkan", "cpu"],
+    }).speechCommand();
+  try {
+    const vulkan = start("vulkan");
+    assert.match(vulkan[2], /[\\/]speech-vulkan(\.exe)?$/);
+    const device = vulkan.indexOf("--device");
+    assert.deepEqual(vulkan.slice(device, device + 2), ["--device", "gpu"]);
+    const cpu = start("cpu");
+    assert.match(cpu[2], /[\\/]speech(\.exe)?$/);
+    assert.ok(!cpu.includes("--device"));
+    assert.match(stopMessage(0xc0000135, "vulkan"), /Vulkanが見つかりません/);
+    assert.match(stopMessage(1, "vulkan"), /停止.*CPU/);
+    assert.doesNotMatch(stopMessage(0xc0000135, "cpu"), /Vulkan/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

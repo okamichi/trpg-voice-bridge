@@ -356,6 +356,11 @@ try {
   assert.equal(runtime.active.mode, "bundled");
   assert.equal(runtime.saved.mode, "external");
   assert.equal(runtime.status, "error");
+  // The admin menu offers the builds this platform's package carries.
+  assert.deepEqual(
+    runtime.backends,
+    process.platform === "win32" ? ["vulkan", "cpu"] : ["metal"],
+  );
   assert.equal(
     (await request("/api/v1/admin/config")).provider.baseUrl,
     newUrl,
