@@ -2,7 +2,7 @@ name: Portable packages
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, bin-package]
     tags: ["v*"]
   workflow_dispatch:
 
