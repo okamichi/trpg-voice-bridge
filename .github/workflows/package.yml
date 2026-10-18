@@ -22,7 +22,7 @@ jobs:
             platform: win32
             arch: x64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: tts-bridge
@@ -42,6 +42,18 @@ jobs:
       - run: npm --prefix discord ci --no-audit --no-fund
       - name: Check Bridge, Collector and release tag versions
         run: npm run version:check
+      # The Windows package also carries a Vulkan build of speech.cpp; its SDK
+      # version follows speech.cpp's own release workflow.
+      - name: Install the Vulkan SDK
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          VULKAN_VERSION: 1.4.357.0
+        run: |
+          curl.exe -fsSL -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
       - name: Build pinned speech.cpp and process supervisor
         run: npm run package:speech
       - run: npm test

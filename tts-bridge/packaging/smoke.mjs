@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   cpSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -174,6 +175,10 @@ try {
     ),
     /speech\.cpp/,
   );
+  // The Vulkan build cannot start without a GPU driver's Vulkan loader; its
+  // DLL dependencies are checked when it is built.
+  if (process.platform === "win32")
+    assert.ok(existsSync(join(packageDir, "runtime/speech/speech-vulkan.exe")));
   const diagnostics = JSON.parse(
     execFileSync(exe, ["--self-test"], { cwd, env, encoding: "utf8" }),
   );

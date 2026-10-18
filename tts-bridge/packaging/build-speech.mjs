@@ -60,16 +60,40 @@ if (!(
   (process.platform === "darwin" && process.arch === "arm64")
 ))
   throw Error("Unsupported target");
+const suffix = windows ? ".exe" : "";
 const config = [
   "-DCMAKE_BUILD_TYPE=Release",
   "-DBUILD_SHARED_LIBS=OFF",
   "-DGGML_NATIVE=OFF",
   "-DGGML_OPENMP=OFF",
-  "-DGGML_VULKAN=OFF",
   "-DGIT_EXE=",
   `-DGGML_BUILD_COMMIT=${pins.ggml.commit}`,
 ];
+// Windows ships a Vulkan build for GPUs and a CPU build for machines without
+// the Vulkan loader, which the Vulkan build cannot start without.
+const variants = windows
+  ? [
+      { name: "speech", backend: "cpu", options: ["-DGGML_VULKAN=OFF"] },
+      {
+        name: "speech-vulkan",
+        backend: "vulkan",
+        options: ["-DGGML_VULKAN=ON"],
+      },
+    ]
+  : [
+      {
+        name: "speech",
+        backend: "metal",
+        options: [
+          "-DGGML_VULKAN=OFF",
+          "-DGGML_METAL=ON",
+          "-DGGML_METAL_EMBED_LIBRARY=ON",
+        ],
+      },
+    ];
 if (windows) {
+  if (!process.env.VULKAN_SDK)
+    throw Error("Install the Vulkan SDK and set VULKAN_SDK first");
   // clang-cl supports prefix mapping for __FILE__ and debug records. Keep the
   // Windows ABI/static CRT while removing absolute paths from ggml assertions.
   const roots = [
@@ -85,10 +109,13 @@ if (windows) {
     "x64",
     "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
     "-DGGML_METAL=OFF",
-    "-DGGML_AVX=OFF",
-    "-DGGML_AVX2=OFF",
-    "-DGGML_FMA=OFF",
-    "-DGGML_F16C=OFF",
+    // The x86-64 baseline is AVX2 (Haswell, 2013; FMA and F16C come with it
+    // under MSVC). It is explicit because ggml turns these off by default
+    // when SOURCE_DATE_EPOCH is set.
+    "-DGGML_SSE42=ON",
+    "-DGGML_AVX=ON",
+    "-DGGML_AVX2=ON",
+    "-DGGML_BMI2=ON",
     // Setting CMAKE_<LANG>_FLAGS replaces CMake's MSVC defaults; restate them
     // (/EHsc enables C++ exceptions, which clang-cl otherwise rejects).
     `-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS ${map}`,
@@ -97,39 +124,45 @@ if (windows) {
   );
 } else {
   const map = `-ffile-prefix-map=${root}=source -ffile-prefix-map=${scratch}=build`;
-  config.push(
-    "-DGGML_METAL=ON",
-    "-DGGML_METAL_EMBED_LIBRARY=ON",
-    `-DCMAKE_C_FLAGS=${map}`,
-    `-DCMAKE_CXX_FLAGS=${map}`,
+  config.push(`-DCMAKE_C_FLAGS=${map}`, `-DCMAKE_CXX_FLAGS=${map}`);
+}
+const output = join(scratch, "speech-runtime");
+rmSync(output, { recursive: true, force: true });
+mkdirSync(output);
+for (const variant of variants) {
+  // Keep independent caches per source revision and variant without exceeding
+  // MSBuild's legacy 260-character limit in its nested compiler-probe files.
+  const buildKey = createHash("sha256")
+    .update(
+      `${pins.speech.commit}:${pins.ggml.commit}:${windows ? "clangcl-pathmap-v3" : "apple-clang"}:${variant.backend}`,
+    )
+    .digest("hex")
+    .slice(0, 12);
+  const build = join(scratch, `s-${buildKey}`);
+  execFileSync(
+    "cmake",
+    ["-S", source, "-B", build, ...config, ...variant.options],
+    { stdio: "inherit" },
+  );
+  execFileSync(
+    "cmake",
+    [
+      "--build",
+      build,
+      "--config",
+      "Release",
+      "--target",
+      "speech-cli",
+      "--parallel",
+      "4",
+    ],
+    { stdio: "inherit" },
+  );
+  cpSync(
+    join(build, ...(windows ? ["Release"] : []), `speech${suffix}`),
+    join(output, `${variant.name}${suffix}`),
   );
 }
-// Keep independent caches per source revision without exceeding MSBuild's
-// legacy 260-character limit in its nested compiler-probe tracking files.
-const buildKey = createHash("sha256")
-  .update(
-    `${pins.speech.commit}:${pins.ggml.commit}:${windows ? "clangcl-pathmap-v2" : "apple-clang"}`,
-  )
-  .digest("hex")
-  .slice(0, 12);
-const build = join(scratch, `s-${buildKey}`);
-execFileSync("cmake", ["-S", source, "-B", build, ...config], {
-  stdio: "inherit",
-});
-execFileSync(
-  "cmake",
-  [
-    "--build",
-    build,
-    "--config",
-    "Release",
-    "--target",
-    "speech-cli",
-    "--parallel",
-    "4",
-  ],
-  { stdio: "inherit" },
-);
 const nativeBuild = join(scratch, "native-build");
 execFileSync(
   "cmake",
@@ -146,18 +179,50 @@ execFileSync(
 execFileSync("cmake", ["--build", nativeBuild, "--config", "Release"], {
   stdio: "inherit",
 });
-const output = join(scratch, "speech-runtime");
-rmSync(output, { recursive: true, force: true });
-mkdirSync(output);
-for (const [dir, name] of [
-  [build, "speech"],
-  [nativeBuild, "bridge-supervisor"],
-]) {
-  const filename = `${name}${windows ? ".exe" : ""}`;
-  cpSync(
-    join(dir, ...(windows ? ["Release"] : []), filename),
-    join(output, filename),
-  );
+cpSync(
+  join(
+    nativeBuild,
+    ...(windows ? ["Release"] : []),
+    `bridge-supervisor${suffix}`,
+  ),
+  join(output, `bridge-supervisor${suffix}`),
+);
+if (windows) {
+  // A release may need no DLL but Windows' own and, for the Vulkan build, the
+  // Vulkan loader that GPU drivers install.
+  const dumpbin = execFileSync(
+    join(
+      process.env["ProgramFiles(x86)"] ?? "C:/Program Files (x86)",
+      "Microsoft Visual Studio/Installer/vswhere.exe",
+    ),
+    ["-latest", "-find", "VC\\Tools\\MSVC\\**\\bin\\Hostx64\\x64\\dumpbin.exe"],
+    { encoding: "utf8" },
+  )
+    .split(/\r?\n/)
+    .find(Boolean);
+  const system = ["advapi32.dll", "kernel32.dll", "shell32.dll", "ws2_32.dll"];
+  for (const [name, allowed] of [
+    ...variants.map((v) => [
+      v.name,
+      v.backend === "vulkan" ? [...system, "vulkan-1.dll"] : system,
+    ]),
+    ["bridge-supervisor", system],
+  ]) {
+    const dlls = execFileSync(
+      dumpbin,
+      ["/nologo", "/dependents", join(output, `${name}${suffix}`)],
+      { encoding: "utf8" },
+    )
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^\S+\.dll$/i.test(line));
+    console.log(`${name}${suffix}: ${dlls.join(" ")}`);
+    const extra = dlls.filter((dll) => !allowed.includes(dll.toLowerCase()));
+    if (extra.length)
+      throw Error(
+        `${name}${suffix} needs DLLs a release does not carry: ${extra.join(" ")}`,
+      );
+  }
 }
 for (const [name, src] of [
   ["speech.cpp-LICENSE", join(source, "LICENSE")],
@@ -186,7 +251,7 @@ writeFileSync(
     {
       ...pins,
       target: `${process.platform}-${process.arch}`,
-      backend: windows ? "cpu" : "metal",
+      backends: variants.map((variant) => variant.backend),
     },
     null,
     2,
