@@ -131,14 +131,20 @@ test("admin routes authenticate, validate and reserve concurrent requests; credi
     entries: [{ title: "test", license: "license" }],
     footer: "",
   };
+  // SQLite stays open until app.close(); Windows cannot delete it before then,
+  // and setup's cleanup hook runs first.
+  const appDir = mkdtempSync(join(tmpdir(), "models-app-"));
   const app = createApp({
-    dataDir: dir,
+    dataDir: appDir,
     runtime: { models },
     credits,
     localOrigin: "http://127.0.0.1:0",
   });
   await new Promise((r) => app.server.listen(0, "127.0.0.1", r));
-  t.after(() => app.close());
+  t.after(async () => {
+    await app.close();
+    rmSync(appDir, { recursive: true, force: true });
+  });
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const token = app.store.secrets.admin;
   const request = (path, method = "GET", body, auth = true) =>
