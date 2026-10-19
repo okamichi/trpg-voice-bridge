@@ -22,11 +22,11 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 - [音声をDiscordで流す場合](docs/discord.md)
 - [別のPCの参加者にPlayerを公開する場合](docs/online.md)
 
-### TRPG-Voice-Bridge の紹介（旧版）
+### TRPG-Voice-Bridge の紹介
 
 https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
-### クイックスタートガイド（旧版）
+### クイックスタートガイド（最新版では管理画面からTTSサーバの起動やモデルのダウンロードが可能）
 
 https://github.com/user-attachments/assets/52d2cf97-fa36-4d7d-aa11-4cf8b30f2761
 
