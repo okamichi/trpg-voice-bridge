@@ -26,7 +26,10 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 
 https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
-### クイックスタートガイド（最新版では管理画面からTTSサーバの起動やモデルのダウンロードが可能）
+### クイックスタートガイド
+
+- 最新版では管理画面からTTSサーバ(speech.cpp)の起動やモデルのダウンロードができるので、TTSサーバを起動する必要は無くなりました。
+- quickstart.md の代わりに、前述の「起動方法とビルド方法」のドキュメントを参照してください。
 
 https://github.com/user-attachments/assets/52d2cf97-fa36-4d7d-aa11-4cf8b30f2761
 
