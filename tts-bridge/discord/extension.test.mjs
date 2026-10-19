@@ -93,7 +93,9 @@ test("settings persist privately, token never returned, toggle and reconnect hon
   });
   assert.equal(result.data.tokenSet, true);
   assert.doesNotMatch(JSON.stringify(result), /private-token/);
-  assert.equal(statSync(join(f.dir, "discord.json")).mode & 0o777, 0o600);
+  // Windows stat.mode does not expose NTFS ACLs as POSIX permission bits.
+  if (process.platform !== "win32")
+    assert.equal(statSync(join(f.dir, "discord.json")).mode & 0o777, 0o600);
   await f.request("settings", "PUT", { channel: { guildId: A, channelId: A } });
   await f.request("connect", "POST", {});
   await f.request("settings", "PUT", { enabled: false });

@@ -55,7 +55,12 @@ export class Engine extends EventEmitter {
     this.timer.unref();
   }
   get config() {
-    return this.store.config;
+    return this.options.resolveProvider
+      ? {
+          ...this.store.config,
+          provider: this.options.resolveProvider(this.store.config.provider),
+        }
+      : this.store.config;
   }
   metadata() {
     return {

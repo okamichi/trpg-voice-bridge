@@ -44,14 +44,14 @@ test.beforeEach(async () => {
                 {
                   guildId: A,
                   channelId: A,
-                  guildName: "michi-server",
+                  guildName: "TRPGサーバー",
                   channelName: "一般",
                   canSpeak: true,
                 },
                 {
                   guildId: A,
                   channelId: "22222222222222222",
-                  guildName: "michi-server",
+                  guildName: "TRPGサーバー",
                   channelName: "控室",
                   canSpeak: false,
                 },
@@ -99,8 +99,9 @@ test("admin can configure, connect, preview and delete token without exposing it
   await expect(
     connections.getByRole("row", { name: /^Discord Bot/ }),
   ).toContainText("未使用");
+  await expect(panel.locator(".state")).toHaveText("未使用");
   await expect(panel.getByLabel("Discord Botに接続する")).toBeHidden();
-  await panel.locator('[data-id="details"] > summary').click();
+  await panel.locator("details.step > summary").click();
   await expect(panel.getByLabel("Discord Botに接続する")).not.toBeChecked();
   await expect(panel.getByLabel("Botトークン")).toBeVisible();
   await panel.getByLabel("Discord Botに接続する").check();
@@ -119,17 +120,21 @@ test("admin can configure, connect, preview and delete token without exposing it
   ).toBeEnabled();
   await expect(
     panel.getByRole("option", {
-      name: "michi-server / 控室（権限がありません）",
+      name: "TRPGサーバー / 控室（権限がありません）",
     }),
   ).toHaveJSProperty("disabled", true);
   await panel.getByRole("button", { name: "接続", exact: true }).click();
+  await expect(panel.locator(".state")).toHaveText(
+    "TRPGサーバー / 一般 — 接続済み",
+  );
+  await expect(panel.locator(".state")).toHaveClass("state ok");
   await expect(panel.locator("[data-id=status]")).toHaveText("接続済み");
-  await panel.locator('[data-id="details"] > summary').click();
+  await panel.locator("details.step > summary").click();
   await expect(panel.getByLabel("Botトークン")).toBeHidden();
   await expect(
     connections.getByRole("row", { name: /^Discord Bot/ }),
-  ).toContainText("michi-server / 一般 — 接続済み");
-  await panel.locator('[data-id="details"] > summary').click();
+  ).toContainText("TRPGサーバー / 一般 — 接続済み");
+  await panel.locator("details.step > summary").click();
   await panel
     .getByRole("combobox", { name: "声", exact: true })
     .selectOption("voice");
@@ -153,10 +158,10 @@ test("disclosure is independent of the connection checkbox and unsaved greeting 
 }) => {
   await page.goto(app.adminUrl());
   const panel = page.locator("#extensions"),
-    details = panel.locator('[data-id="details"]');
+    details = panel.locator("details.step");
   const enabled = panel.getByLabel("Discord Botに接続する");
   await expect(details).not.toHaveAttribute("open");
-  await panel.locator('[data-id="details"] > summary').click();
+  await panel.locator("details.step > summary").click();
   await enabled.check();
   await expect(details).toHaveAttribute("open", "");
   await expect(
@@ -178,14 +183,14 @@ test("disclosure is independent of the connection checkbox and unsaved greeting 
   await expect(panel.locator("[data-id=greetingStatus]")).toContainText(
     "退出: 音声の準備済み",
   );
-  await panel.locator('[data-id="details"] > summary').press("Enter");
+  await panel.locator("details.step > summary").press("Enter");
   await expect(details).not.toHaveAttribute("open");
   await expect(enabled).toBeChecked();
   await expect(enabled).toBeHidden();
   // A status refresh must not reopen a panel the user collapsed.
   await page.waitForTimeout(5200);
   await expect(details).not.toHaveAttribute("open");
-  await panel.locator('[data-id="details"] > summary').click();
+  await panel.locator("details.step > summary").click();
   await enabled.uncheck();
   await expect(details).toHaveAttribute("open", "");
   await expect(enabled).not.toBeChecked();
@@ -203,7 +208,7 @@ test("default narrator can be previewed and saved with no registered voice selec
   });
   await page.goto(app.adminUrl());
   const panel = page.locator("#extensions");
-  await panel.locator('[data-id="details"] > summary').click();
+  await panel.locator("details.step > summary").click();
   await panel.getByLabel("Discord Botに接続する").check();
   await expect(
     panel.getByRole("combobox", { name: "声", exact: true }),
@@ -220,7 +225,7 @@ test("default narrator can be previewed and saved with no registered voice selec
   );
   await page.reload();
   await expect(panel.getByLabel("Botトークン")).toBeHidden();
-  await panel.locator('[data-id="details"] > summary').click();
+  await panel.locator("details.step > summary").click();
   await expect(panel.getByLabel("Discord Botに接続する")).toBeChecked();
   await expect(
     panel.getByRole("combobox", { name: "声", exact: true }),

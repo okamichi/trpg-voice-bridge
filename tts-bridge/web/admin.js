@@ -1,4 +1,32 @@
+let modelState,
+  modelTimer,
+  modelRequest,
+  trackedPull,
+  modelsOpened = false,
+  modelBusy = false,
+  modelGeneration = 0;
+const pulling = (job) =>
+  ["starting", "running", "stopping"].includes(job?.status);
+const gb = (bytes) => (bytes / 1e9).toFixed(2);
 const $ = (id) => document.getElementById(id);
+let stepsInitialized = false,
+  previousPending = 0,
+  refreshTimer,
+  shuttingDown = false;
+function numberSteps() {
+  document
+    .querySelectorAll("details.step:not([hidden]) .step-num")
+    .forEach((el, i) => {
+      el.textContent = i + 1;
+    });
+}
+function setState(el, text, kind = "") {
+  el.textContent = text;
+  el.className = `state ${kind}`;
+}
+numberSteps();
+let runtimeInitialized = false,
+  runtimeState;
 let accepting = false,
   provider,
   chatVoiceRegistrationEnabled = false,
@@ -27,11 +55,115 @@ async function run(fn) {
     $("notice").textContent = "";
     await fn();
   } catch (e) {
-    $("notice").textContent = e.message;
+    if (!shuttingDown) $("notice").textContent = e.message;
   }
 }
+// A menu value is "external" or "bundled:<backend>". The Bridge lists the
+// builds its own platform carries: Windows has Vulkan and CPU, macOS one.
+function runtimeLabel(mode, backend, backends) {
+  if (mode === "external") return "外部サーバー";
+  const names = { vulkan: "Vulkan", cpu: "CPU" };
+  return backends.length > 1
+    ? `内蔵speech.cpp（${names[backend] ?? backend}）`
+    : "内蔵speech.cpp";
+}
+// The menu picks the next start's mode; the active mode decides the connection.
+function applyRuntimeView() {
+  if (!runtimeState) return;
+  const bundled = runtimeState.active.mode === "bundled";
+  const selected = $("runtimeMode").value.startsWith("bundled");
+  $("bundledFields").hidden = !selected;
+  $("providerSection").hidden = selected;
+  $("providerUrl").disabled = bundled;
+  $("providerForm").querySelector("button").disabled = bundled;
+  $("providerNote").hidden = !bundled;
+}
 async function refresh() {
+  if (shuttingDown) return;
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
+  if (shuttingDown) return;
+  const ttsConnected = ![
+    "unreachable",
+    "error",
+    "starting",
+    "stopped",
+  ].includes(d.tts.status);
+  const collectorConnected = d.collectors.some((c) => c.online);
+  if (!stepsInitialized) {
+    $("stepTts").open = !ttsConnected;
+    $("stepCollector").open = !!pending.length || !collectorConnected;
+    $("stepSession").open = true;
+    $("stepEnd").open = true;
+    stepsInitialized = true;
+  } else if (!previousPending && pending.length) {
+    $("stepCollector").open = true;
+  }
+  previousPending = pending.length;
+  setState(
+    $("ttsState"),
+    ttsConnected ? "接続済み" : "未接続・準備中",
+    ttsConnected ? "ok" : "warn",
+  );
+  setState(
+    $("collectorState"),
+    pending.length ? "承認待ち" : collectorConnected ? "接続中" : "未接続",
+    !pending.length && collectorConnected ? "ok" : "warn",
+  );
+  setState(
+    $("sessionState"),
+    `読み上げ${d.accepting ? "中" : "停止中"} ／ 参加者 ${d.players.length} 接続`,
+    d.accepting ? "ok" : "",
+  );
+  $("restartNotice").hidden = !(d.runtime?.restartRequired && d.canShutdown);
+  $("shutdownSection").hidden = !d.canShutdown;
+  $("shutdownNote").hidden = !d.runtime || !d.canShutdown;
+  if (d.runtime) {
+    $("runtimeSection").hidden = false;
+    const r = (runtimeState = d.runtime);
+    const target =
+      r.active.mode === "bundled"
+        ? `http://127.0.0.1:${r.active.ttsPort}`
+        : (provider?.baseUrl ?? "");
+    const states = {
+      external: "外部サーバー",
+      stopped: "停止",
+      starting: "モデル読込中",
+      ready: "準備完了",
+      error: "起動失敗",
+    };
+    if (r.active.mode === "bundled")
+      setState(
+        $("ttsState"),
+        states[r.status] ?? r.status,
+        r.status === "ready" ? "ok" : r.status === "error" ? "warn" : "",
+      );
+    const parts =
+      r.active.mode === "bundled"
+        ? [
+            states[r.status] ?? r.status,
+            runtimeLabel("bundled", r.active.backend, r.backends),
+            r.active.model || "モデル指定なし",
+            `ポート ${r.active.ttsPort}`,
+          ]
+        : [states.external];
+    $("runtimeStatus").textContent =
+      `現在: ${[...parts, `接続先 ${target}`].join(" / ")}${r.error ? " — " + r.error : ""}${r.restartRequired ? "（保存済み設定の反映には再起動が必要です）" : ""}`;
+    if (!runtimeInitialized) {
+      for (const backend of r.backends) {
+        const option = document.createElement("option");
+        option.value = `bundled:${backend}`;
+        option.textContent = runtimeLabel("bundled", backend, r.backends);
+        $("runtimeMode").append(option);
+      }
+      $("runtimeMode").value =
+        r.saved.mode === "bundled" ? `bundled:${r.saved.backend}` : "external";
+      $("runtimeModel").value = r.saved.model;
+      $("runtimePort").value = r.saved.ttsPort;
+      runtimeInitialized = true;
+      void refreshModels(true);
+    }
+    applyRuntimeView();
+  }
   const registrations = (d.voiceCommands ?? []).filter(
     (x) => x.status === "failed",
   );
@@ -46,7 +178,7 @@ async function refresh() {
   $("toggle").textContent = accepting ? "読み上げ停止" : "読み上げ開始";
   $("toggle").disabled = false;
   $("connection").textContent =
-    `Irodori-TTS: ${d.tts.status === "unreachable" ? "接続できません" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
+    `Irodori-TTS: ${["unreachable", "error", "starting", "stopped"].includes(d.tts.status) ? "未接続・準備中" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
   const collectors = d.collectors.length
     ? d.collectors.map(
         (c) =>
@@ -91,6 +223,16 @@ $("toggle").onclick = () =>
   run(async () => {
     await command(accepting ? "stop" : "start");
     await refresh();
+  });
+$("copyExtensionsUrl").onclick = () =>
+  run(async () => {
+    try {
+      await navigator.clipboard.writeText("chrome://extensions");
+      $("notice").textContent =
+        "chrome://extensions をコピーしました。新しいタブのアドレスバーに貼り付けて開いてください。";
+    } catch {
+      $("notice").textContent = "表示されたアドレスをコピーしてください。";
+    }
   });
 $("copyInvite").onclick = () =>
   run(async () => {
@@ -280,7 +422,10 @@ await run(async () => {
   $("sentencePause").value = sentencePauseMs / 1000;
   $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
   await refresh();
-  setInterval(() => run(refresh), 5000);
+  refreshTimer = setInterval(() => {
+    if (!shuttingDown) void run(refresh);
+  }, 5000);
+  let previousRow = $("connection").closest("tr");
   for (const extension of await api("extensions")) {
     const row = document.createElement("tr"),
       label = document.createElement("th"),
@@ -289,21 +434,251 @@ await run(async () => {
     label.textContent = extension.title;
     connectionStatus.textContent = "確認しています…";
     row.append(label, connectionStatus);
-    $("connectionRows").append(row);
-    const container = document.createElement("div");
-    $("extensions").append(container);
+    previousRow.after(row);
+    previousRow = row;
+    const step = document.createElement("details");
+    step.className = "step";
+    step.innerHTML =
+      '<summary><span class="step-num"></span><span class="step-title"></span><small>使う場合</small><span class="state"></span></summary><div class="step-body"></div>';
+    step.querySelector(".step-title").textContent = extension.title;
+    const state = step.querySelector(".state");
+    setState(state, "確認しています…");
+    const container = step.querySelector(".step-body");
+    $("extensions").append(step);
+    numberSteps();
     try {
       const { mount } = await import(extension.script);
       await mount(container, {
-        setConnectionStatus: (text) => {
+        setConnectionStatus: (text, kind) => {
           connectionStatus.textContent = text;
+          setState(state, text, kind);
         },
         api: (path, method, body) =>
           api(`ext/${extension.id}/${path}`, method, body),
       });
     } catch {
       connectionStatus.textContent = "読み込めませんでした";
+      setState(state, "読み込めませんでした", "warn");
       container.textContent = `${extension.title}: 読み込めませんでした`;
     }
+  }
+});
+
+$("runtimeMode").onchange = () => {
+  applyRuntimeView();
+  void refreshModels(true);
+};
+$("runtimeForm").onsubmit = (event) => {
+  event.preventDefault();
+  run(async () => {
+    // The external mode keeps the last bundled build for a later switch back.
+    const [mode, backend = runtimeState.saved.backend] =
+      $("runtimeMode").value.split(":");
+    await api("runtime", "PUT", {
+      mode,
+      backend,
+      model: $("runtimeModel").value.trim(),
+      ttsPort: Number($("runtimePort").value),
+    });
+    await refresh();
+  });
+};
+for (const button of document.querySelectorAll("[data-shutdown]"))
+  button.onclick = () =>
+    run(async () => {
+      await api("shutdown", "POST", {});
+      shuttingDown = true;
+      clearInterval(refreshTimer);
+      clearTimeout(modelTimer);
+      document.querySelectorAll("[data-shutdown]").forEach((el) => {
+        el.disabled = true;
+      });
+      $("notice").textContent =
+        "Bridgeを終了しています。この画面を閉じてからBridgeを起動し直してください。";
+    });
+
+function modelStatus(message, error = false) {
+  $("catalogStatus").textContent = message;
+  $("catalogStatus").className = error ? "error" : "muted";
+  $("catalogStatus").hidden = !message;
+}
+function renderModels() {
+  if (!modelState) {
+    for (const id of ["modelDir", "modelDirSave", "modelDirReset"])
+      $(id).disabled = modelBusy;
+    return;
+  }
+  const { models, pull, dir, defaultDir } = modelState;
+  const selected = pulling(pull)
+    ? pull.choice
+    : $("catalogModel").value || "irodori-tts:q8_0";
+  $("catalogModel").replaceChildren(
+    ...models.map((m) => {
+      const suffix = m.fetched
+        ? "・取得済み"
+        : pulling(pull) && pull.choice === m.choice
+          ? "・ダウンロード中"
+          : m.partial
+            ? `・途中 ${Math.floor((m.partial / m.size) * 100)}%`
+            : "";
+      return new Option(`${m.label}（${gb(m.size)}GB）${suffix}`, m.choice);
+    }),
+  );
+  $("catalogModel").value = selected;
+  const m = models.find((m) => m.choice === selected) ?? models[0];
+  if (m) $("catalogModel").value = m.choice;
+  const busy = modelBusy || pulling(pull);
+  $("catalogModel").disabled = busy;
+  $("catalogLicense").hidden = !m?.gemma;
+  $("catalogUse").disabled = busy || !m;
+  $("catalogUse").textContent = pulling(pull)
+    ? "ダウンロード中…"
+    : m?.fetched
+      ? "このモデルを使う"
+      : m?.partial
+        ? "続きからダウンロードして使う"
+        : "ダウンロードして使う";
+  $("catalogCancel").hidden = !pulling(pull);
+  $("catalogCancel").disabled = modelBusy || pull?.status === "stopping";
+  $("catalogProgressRow").hidden = !pulling(pull);
+  if (pulling(pull) && m) {
+    $("catalogProgress").value = m.partial / m.size;
+    $("catalogProgressText").textContent =
+      `${gb(m.partial)} / ${gb(m.size)} GB（${Math.floor((m.partial / m.size) * 100)}%）`;
+  }
+  $("modelDir").disabled = busy;
+  $("modelDirSave").disabled = busy;
+  $("modelDirReset").disabled = busy || dir === defaultDir;
+  $("modelDirDefault").textContent = `既定: ${defaultDir}`;
+}
+async function refreshModels(opening = false) {
+  if (modelBusy || shuttingDown) return;
+  if (modelRequest) return modelRequest;
+  clearTimeout(modelTimer);
+  const generation = modelGeneration;
+  modelRequest = (async () => {
+    try {
+      const data = await api("models");
+      if (generation !== modelGeneration) return;
+      if (!modelsOpened || modelState?.dir !== data.dir)
+        $("modelDir").value = data.dir;
+      if ((!modelsOpened || opening) && pulling(data.pull))
+        trackedPull = data.pull.id;
+      modelsOpened = true;
+      modelState = data;
+      $("catalogListError").hidden = true;
+      $("catalogBody").hidden = false;
+      if (trackedPull && data.pull?.id === trackedPull && !pulling(data.pull)) {
+        trackedPull = undefined;
+        if (data.pull.status === "done") {
+          $("runtimeModel").value = data.pull.path;
+          modelStatus(
+            "ダウンロードしました。「次回起動の設定を保存」を押してから、Bridgeを再起動してください。",
+          );
+        } else if (data.pull.status === "cancelled")
+          modelStatus(
+            "中止しました。もう一度押すと、続きからダウンロードします。",
+          );
+        else
+          modelStatus(data.pull.error || "ダウンロードに失敗しました。", true);
+      } else if (trackedPull && data.pull?.id !== trackedPull)
+        trackedPull = undefined;
+      renderModels();
+    } catch (e) {
+      if (generation !== modelGeneration) return;
+      $("catalogListError").textContent = e.message;
+      $("catalogListError").hidden = false;
+      // Keep cancellation available if polling temporarily fails mid-download.
+      $("catalogBody").hidden = !modelState;
+    } finally {
+      modelRequest = undefined;
+      if (
+        !shuttingDown &&
+        !modelBusy &&
+        (pulling(modelState?.pull) || trackedPull)
+      )
+        modelTimer = setTimeout(() => refreshModels(), 1000);
+    }
+  })();
+  return modelRequest;
+}
+async function modelAction(fn) {
+  if (modelBusy) return;
+  modelBusy = true;
+  modelGeneration++;
+  clearTimeout(modelTimer);
+  renderModels();
+  try {
+    await fn();
+  } catch (e) {
+    modelStatus(e.message, true);
+  } finally {
+    modelBusy = false;
+    // Discard a pre-mutation response before requesting the new job snapshot.
+    await modelRequest;
+    await refreshModels();
+    renderModels();
+  }
+}
+$("catalogModel").onchange = () => {
+  modelStatus("");
+  renderModels();
+  void refreshModels();
+};
+$("catalogUse").onclick = () =>
+  modelAction(async () => {
+    const m = modelState.models.find(
+      (m) => m.choice === $("catalogModel").value,
+    );
+    if (m.fetched) {
+      $("runtimeModel").value = m.path;
+      modelStatus(
+        "パスを入れました。「次回起動の設定を保存」を押してから、Bridgeを再起動してください。",
+      );
+    } else {
+      modelStatus("");
+      const { id } = await api("models/pull", "POST", { choice: m.choice });
+      trackedPull = id;
+    }
+  });
+$("catalogCancel").onclick = () =>
+  modelAction(() => api("models/pull", "DELETE"));
+async function saveModelDir(dir) {
+  // Drain a prior poll so its old snapshot cannot overwrite the mutation result.
+  await modelRequest;
+  modelState = await api("models/dir", "PUT", { dir });
+  $("modelDir").value = modelState.dir;
+  modelStatus("");
+}
+$("modelDirSave").onclick = () =>
+  modelAction(() => saveModelDir($("modelDir").value.trim()));
+$("modelDirReset").onclick = () => modelAction(() => saveModelDir(""));
+let creditsLoaded = false;
+$("credits").addEventListener("toggle", async () => {
+  if (!$("credits").open || creditsLoaded) return;
+  try {
+    const data = await api("credits");
+    const nodes = data.entries.map((entry) => {
+      const section = document.createElement("section");
+      const title = document.createElement("h3");
+      title.textContent = entry.title;
+      const link = document.createElement("a");
+      link.href = entry.url;
+      link.textContent = entry.linkText;
+      link.target = "_blank";
+      link.rel = "noopener";
+      const note = document.createElement("p");
+      note.textContent = entry.note || "";
+      const license = document.createElement("pre");
+      license.textContent = entry.license;
+      section.append(title, link, note, license);
+      return section;
+    });
+    const footer = document.createElement("p");
+    footer.textContent = data.footer;
+    $("creditsBody").replaceChildren(...nodes, footer);
+    creditsLoaded = true;
+  } catch (e) {
+    $("creditsBody").textContent = e.message;
   }
 });

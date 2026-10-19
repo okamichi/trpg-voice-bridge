@@ -1,8 +1,5 @@
 export async function mount(el, { api, setConnectionStatus = () => {} }) {
   el.innerHTML = `
-    <details data-id="details">
-    <summary>Discord Bot</summary>
-    <section>
     <details data-id="preparation">
       <summary>Discordの準備</summary>
       <h3>Discord Bot の準備方法</h3>
@@ -60,7 +57,7 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
     <button data-id="greeting">メッセージを保存</button>
     <button data-id="previewEnter">入室を試聴</button><button data-id="previewLeave">退出を試聴</button>
     <audio data-id="preview" controls hidden></audio></fieldset>
-    <p>Discordで聞く人は、Playerの音声を有効にしないでください。すでに再生中なら「音声を停止」を押してください。ログと声の設定はPlayerで使えます。</p></section></details>`;
+    <p>Discordで聞く人は、Playerの音声を有効にしないでください。すでに再生中なら「音声を停止」を押してください。ログと声の設定はPlayerで使えます。</p>`;
   const $ = (id) => el.querySelector(`[data-id="${id}"]`);
   let current,
     busy = false,
@@ -90,6 +87,13 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
         : !s.installed
           ? "未インストール"
           : `${destination}${states[s.state] ?? s.state}`,
+      !s.enabled
+        ? undefined
+        : !s.installed || s.state === "error"
+          ? "warn"
+          : s.state === "connected"
+            ? "ok"
+            : undefined,
     );
     $("status").textContent = states[s.state] ?? s.state;
     $("error").textContent = !s.installed
@@ -325,7 +329,7 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
       render(await api("status"));
     } catch (e) {
       $("error").textContent = e.message;
-      setConnectionStatus("状態を取得できません");
+      setConnectionStatus("状態を取得できません", "warn");
     } finally {
       polling = false;
     }

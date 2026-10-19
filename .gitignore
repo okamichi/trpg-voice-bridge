@@ -9,6 +9,7 @@
 !.env.example
 .envrc
 .npmrc
+developments/
 *.pem
 *.key
 *.p12

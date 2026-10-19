@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { readAsset } from "./runtime/assets.mjs";
 import { Store, initialConfig } from "./store.mjs";
 import {
   characterSettings,
@@ -19,7 +20,6 @@ import {
   sourceKey,
   DELIVERY_CAPTION_MODES,
 } from "./contracts.mjs";
-const webRoot = new URL("../web/", import.meta.url);
 const equal = (a, b) => {
   if (typeof a !== "string" || typeof b !== "string") return false;
   const x = Buffer.from(a ?? ""),
@@ -55,6 +55,9 @@ export function createApp({
   localOrigin = "http://127.0.0.1:8090",
   publicOrigin = "",
   providerOptions = {},
+  runtime,
+  onShutdown,
+  credits = { entries: [], footer: "" },
   initial,
   loadDefaults,
   extensions = [],
@@ -210,7 +213,7 @@ export function createApp({
     requests.set(k, entry);
     return promise;
   }
-  const voices = () => engine.references.list(store.config.provider);
+  const voices = () => engine.references.list(engine.config.provider);
   function voiceProfileUses() {
     const uses = {};
     for (const ext of installedExtensions.values())
@@ -226,7 +229,7 @@ export function createApp({
       404,
     );
     return engine.references.register({
-      provider: store.config.provider,
+      provider: engine.config.provider,
       voiceId: b.voiceId,
       wav: preview.wav,
     });
@@ -261,7 +264,11 @@ export function createApp({
         res.writeHead(200, {
           "Content-Type": "text/javascript; charset=utf-8",
         });
-        return res.end(readFileSync(extension.adminScript));
+        return res.end(
+          extension.adminAsset
+            ? readAsset(extension.adminAsset)
+            : readFileSync(extension.adminScript),
+        );
       }
       const staticFiles = {
         "/player/": ["player.html", "text/html"],
@@ -277,7 +284,7 @@ export function createApp({
         if (path === "/admin/" || path === "/web/admin.js") origin(req, true);
         const [f, mime] = staticFiles[path];
         res.writeHead(200, { "Content-Type": `${mime}; charset=utf-8` });
-        return res.end(readFileSync(new URL(f, webRoot)));
+        return res.end(readAsset(`web/${f}`));
       }
       if (path === "/api/v1/admin-login" && method === "POST") {
         origin(req, true);
@@ -409,6 +416,11 @@ export function createApp({
           });
         }
         if (path === "/api/v1/admin/provider" && method === "PUT") {
+          check(
+            runtime?.settings.active.mode !== "bundled",
+            "内蔵TTSの使用中は外部接続先を変更できません",
+            409,
+          );
           const b = await body(req);
           store.change((c) => {
             store.compare(c.provider, b.before);
@@ -499,14 +511,63 @@ export function createApp({
             return json(res, 200, { ok: true });
           }
         }
+        if (path === "/api/v1/admin/credits" && method === "GET")
+          return json(res, 200, credits);
+        if (runtime && path.startsWith("/api/v1/admin/models")) {
+          try {
+            if (path === "/api/v1/admin/models" && method === "GET")
+              return json(res, 200, await runtime.models.list());
+            if (path === "/api/v1/admin/models/dir" && method === "PUT") {
+              await runtime.models.setDir((await body(req))?.dir);
+              return json(res, 200, await runtime.models.list());
+            }
+            if (path === "/api/v1/admin/models/pull" && method === "POST")
+              return json(
+                res,
+                202,
+                await runtime.models.pull((await body(req))?.choice),
+              );
+            if (path === "/api/v1/admin/models/pull" && method === "DELETE") {
+              await runtime.models.cancel();
+              return json(res, 200, { ok: true });
+            }
+          } catch (e) {
+            throw new HttpError(e.status ?? 500, e.message);
+          }
+        }
+        if (runtime && path === "/api/v1/admin/runtime") {
+          if (method === "PUT") {
+            try {
+              runtime.settings.save(await body(req));
+            } catch (e) {
+              throw new HttpError(400, e.message);
+            }
+          } else check(method === "GET", "許可されていない操作です", 405);
+          return json(res, 200, runtime.snapshot());
+        }
+        if (
+          onShutdown &&
+          path === "/api/v1/admin/shutdown" &&
+          method === "POST"
+        ) {
+          json(res, 200, { ok: true });
+          setImmediate(() => onShutdown());
+          return;
+        }
         if (path === "/api/v1/admin/diagnostics" && method === "GET") {
           let tts;
           try {
-            if (store.config.provider.type === "mock") tts = { status: "mock" };
+            if (runtime?.settings.active.mode === "bundled")
+              tts = { status: runtime.status, error: runtime.error };
+            else if (engine.config.provider.type === "mock")
+              tts = { status: "mock" };
             else {
-              const r = await fetch(`${store.config.provider.baseUrl}/health`, {
-                signal: AbortSignal.timeout(5000),
-              });
+              const r = await fetch(
+                `${engine.config.provider.baseUrl}/health`,
+                {
+                  signal: AbortSignal.timeout(5000),
+                },
+              );
               check(r.ok, "TTS診断失敗", 502);
               const h = await r.json();
               tts = { status: h.status, model: h.model, runtime: h.runtime };
@@ -516,6 +577,8 @@ export function createApp({
           }
           return json(res, 200, {
             ...engine.metadata(),
+            ...(runtime ? { runtime: runtime.snapshot() } : {}),
+            canShutdown: Boolean(onShutdown),
             accepting: engine.accepting,
             tts,
             degraded: engine.degraded,
@@ -808,6 +871,10 @@ export function createApp({
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16384 });
   server.on("upgrade", (req, socket, head) => {
+    if (closing) {
+      socket.destroy();
+      return;
+    }
     try {
       check(
         req.url === "/ws" &&

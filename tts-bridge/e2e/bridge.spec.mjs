@@ -1,3 +1,4 @@
+import { openStep } from "./admin-helpers.mjs";
 import { test, expect } from "@playwright/test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,7 +30,10 @@ test.beforeEach(async () => {
   app.engine.accepting = true;
   invite = (await command("invite")).url;
 });
-test.afterEach(async () => {
+test.afterEach(async ({ context }) => {
+  // Close the admin and its Player popup before waiting for the test server.
+  // Playwright normally disposes the context only after this hook returns.
+  await context.close();
   await app.close();
 });
 async function admin(path, method = "GET", body) {
@@ -315,7 +319,7 @@ test("admin delivery caption mode selection persists and reports stale changes",
     exact: true,
   });
   await expect(mode).toBeHidden();
-  await page.getByText("詳細設定", { exact: true }).click();
+  await openStep(page, "stepTuning");
   await expect(mode).toHaveValue("append");
   await expect(mode.locator("option")).toHaveText([
     "声の説明に追記型",
@@ -327,7 +331,7 @@ test("admin delivery caption mode selection persists and reports stale changes",
     await expect(mode).toBeEnabled();
     await expect.poll(() => app.store.config.deliveryCaptionMode).toBe(value);
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTuning");
     await expect(mode).toHaveValue(value);
   }
   await admin("delivery", "PUT", {
@@ -339,7 +343,7 @@ test("admin delivery caption mode selection persists and reports stale changes",
   await expect(mode).toHaveValue("append");
   expect(app.store.config.deliveryCaptionMode).toBe("replace");
   await page.reload();
-  await page.getByText("詳細設定", { exact: true }).click();
+  await openStep(page, "stepTuning");
   await expect(mode).toHaveValue("replace");
 });
 test("management startup link, simplified controls and reset confirmation", async ({
@@ -356,7 +360,10 @@ test("management startup link, simplified controls and reset confirmation", asyn
   await page.getByRole("button", { name: "Playerを開く" }).click();
   const player = await popupPromise;
   await expect(player.locator("#characters")).toContainText("メリッサ");
-  await page.getByText("詳細設定", { exact: true }).click();
+  await openStep(page, "stepTuning");
+  const collectorGuide = page.getByText("chrome://extensions");
+  await openStep(page, "stepCollector");
+  await expect(collectorGuide).toBeVisible();
   const publishText = page.getByLabel("Playerにセリフの本文を表示する");
   await expect(publishText).toBeChecked();
   await publishText.uncheck();
@@ -371,6 +378,7 @@ test("management startup link, simplified controls and reset confirmation", asyn
   await pause.dispatchEvent("change");
   await expect(page.locator("#notice")).toContainText("0.5秒");
   expect(app.store.config.sentencePauseMs).toBe(500);
+  await openStep(page, "stepReset");
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "設定を初期値に戻す" }).click();
   await expect(page.locator("#notice")).toContainText("実行しました");
@@ -612,7 +620,7 @@ test("chat registration setting persists and restores checkbox after failed save
   page,
 }) => {
   await page.goto(app.adminUrl());
-  await page.getByText("詳細設定", { exact: true }).click();
+  await openStep(page, "stepTuning");
   const toggle = page.getByRole("checkbox", {
     name: "チャットによる登録機能を有効にする",
   });
@@ -625,7 +633,7 @@ test("chat registration setting persists and restores checkbox after failed save
     .poll(() => app.store.config.chatVoiceRegistrationEnabled)
     .toBe(true);
   await page.reload();
-  await page.getByText("詳細設定", { exact: true }).click();
+  await openStep(page, "stepTuning");
   await expect(toggle).toBeChecked();
   await page.route("**/api/v1/admin/chat-voice-registration", (route) =>
     route.fulfill({

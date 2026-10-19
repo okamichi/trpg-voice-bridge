@@ -2,12 +2,11 @@ import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { Playback } from "../web/playback.js";
 import { toDiscordPcm } from "./pcm.mjs";
+import { discordRequire } from "./dependencies.mjs";
 
 export async function loadDependencies() {
-  const [discord, voice] = await Promise.all([
-    import("discord.js"),
-    import("@discordjs/voice"),
-  ]);
+  const discord = discordRequire("discord.js");
+  const voice = discordRequire("@discordjs/voice");
   return { ...discord, ...voice };
 }
 

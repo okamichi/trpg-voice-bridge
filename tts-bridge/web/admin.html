@@ -28,112 +28,290 @@
           </tr>
         </tbody>
       </table>
-      <button id="toggle" disabled>読み上げ開始</button>
-      <button id="copyInvite">参加URLをコピー</button>
-      <button id="openPlayer">Playerを開く</button>
-      <p id="invite" class="muted"></p>
-      <p>キャラの声はPlayerで全員が設定できます。</p>
-    </section>
-    <div id="extensions"></div>
-    <section id="pairingSection" hidden>
-      <h2>Collectorの初回接続を承認</h2>
-      <p>拡張機能に表示された確認コードと一致する接続を承認してください。</p>
-      <div id="pairings"></div>
     </section>
     <section id="recovery" hidden>
       <h2>音声生成の確認が必要です</h2>
       <p id="failure"></p>
       <button id="recover">Irodori側の処理終了を確認して復帰</button>
     </section>
-    <details>
-      <summary>詳細設定</summary>
-      <section>
-        <h2>チャットによる声登録</h2>
-        <label
-          ><input
-            id="chatVoiceRegistration"
-            type="checkbox"
-            aria-describedby="chatVoiceRegistrationHelp"
-          />チャットによる登録機能を有効にする</label
-        >
-        <p id="chatVoiceRegistrationHelp" class="muted">
-          チャットで「（ブリッジ声登録）若くて透き通るような女性の声。」のような発言キャラの声の自動登録コマンドを受け付ける。「（ブリッジ声削除）」で発言キャラの声の割り当てを解除し、声が未設定の状態に戻す。
-        </p>
-        <div id="voiceCommandDiagnostics"></div>
-      </section>
-      <section>
-        <h2>Irodori接続先</h2>
-        <form id="providerForm">
-          <label>接続先URL<input id="providerUrl" type="url" required /></label
-          ><button>接続先を保存</button
-          ><button type="button" id="testConnection">接続テスト</button>
-        </form>
-      </section>
-      <section>
-        <h2>Playerの表示</h2>
-        <label
-          ><input
-            id="publishText"
-            type="checkbox"
-          />Playerにセリフの本文を表示する</label
-        >
-        <p class="muted">
-          オフにすると、Playerのログには話者名だけを表示します。次のセリフから反映します。
-        </p>
-        <label
-          >文の分割しきい値（文字）<input
-            id="sentenceSplitThreshold"
-            type="number"
-            min="1"
-            max="500"
-            step="1"
-            required
-        /></label>
-        <p class="muted">
-          絵文字と感情・演技タグを除いた本文がこの文字数を超えたときだけ、「。」「！」「？」や改行で分割します。この文字数以内はまとめて生成します。句読点と本文中の空白は文字数に含みます。次のセリフから反映します。
-        </p>
-        <label
-          >文と文の間（秒）<input
-            id="sentencePause"
-            type="number"
-            min="0"
-            max="3"
-            step="0.1"
-            required
-        /></label>
-        <p class="muted">
-          長いセリフを分割して生成・再生するときに、文と文の間に入れる無音の長さです。次のセリフから反映します。
-        </p>
-      </section>
-      <section>
-        <h2 id="deliveryCaptionHeading">感情・演技の指定方法</h2>
-        <select
-          id="deliveryCaptionMode"
-          aria-labelledby="deliveryCaptionHeading"
-        >
-          <option value="append">声の説明に追記型</option>
-          <option value="prepend">声の説明より前に</option>
-          <option value="replace">声の説明と置換（参照音声登録時）</option>
-        </select>
-        <p class="muted">
-          発言内の中カッコ内で指定した感情・演技の説明を、TTSサーバへ送信する際に、Playerが設定した声の説明(caption)の後ろに追加するか、前に追加するか、置き換えるかを選びます。
-          感情や演技の指定を行う際に、効果がなければ変更してみてください。次のセリフから反映します。
-        </p>
-      </section>
-      <section>
-        <h2>接続・セッション</h2>
-        <button id="renewInvite">参加URLを再発行</button>
-        <button id="releaseCollector">Collectorの接続を解除</button>
-        <button id="revokeCollectors">Collectorの承認を取り消す</button>
-        <button id="endSession" class="danger">セッション終了</button>
-      </section>
-      <section>
-        <h2>初期化</h2>
-        <p>
-          キャラ・声・紐付けをconfigの初期値へ戻します。認証情報と接続設定は残ります。
-        </p>
-        <button id="resetSettings" class="danger">設定を初期値に戻す</button>
-      </section>
+    <details class="step" id="stepTts">
+      <summary>
+        <span class="step-num"></span><span class="step-title">TTSの準備</span
+        ><span class="state" id="ttsState"></span>
+      </summary>
+      <div class="step-body">
+        <div class="part" id="runtimeSection" hidden>
+          <h3>TTSの起動設定</h3>
+          <p id="runtimeStatus"></p>
+          <div class="callout" id="restartNotice" hidden>
+            <p>
+              保存した設定を反映するには、Bridgeを終了してから起動し直してください。
+            </p>
+            <button data-shutdown class="secondary" type="button">
+              Bridgeを終了
+            </button>
+          </div>
+          <form id="runtimeForm">
+            <label
+              >起動方式<select id="runtimeMode">
+                <option value="external">外部サーバー</option>
+              </select></label
+            >
+            <div id="bundledFields">
+              <label
+                >GGUFモデルの絶対パス<input id="runtimeModel" type="text"
+              /></label>
+              <small class="field-note"
+                >モデルを直接指定するか、一覧からダウンロードし、設定を保存してください。</small
+              >
+
+              <div id="catalog">
+                <h3>一覧からダウンロード</h3>
+                <p id="catalogListError" class="error" hidden></p>
+                <div id="catalogBody" hidden>
+                  <label>モデル<select id="catalogModel"></select></label>
+                  <p id="catalogLicense" hidden>
+                    <small
+                      >Irodori-TTS v4-Large は
+                      <a
+                        href="https://ai.google.dev/gemma/terms"
+                        target="_blank"
+                        >Gemmaの利用規約</a
+                      >に従います。</small
+                    >
+                  </p>
+                  <button type="button" id="catalogUse"></button
+                  ><button
+                    type="button"
+                    class="secondary"
+                    id="catalogCancel"
+                    hidden
+                  >
+                    中止
+                  </button>
+                  <div id="catalogProgressRow" hidden>
+                    <progress id="catalogProgress" max="1" value="0"></progress>
+                    <small id="catalogProgressText"></small>
+                  </div>
+                </div>
+                <p id="catalogStatus" role="status" hidden></p>
+                <label>保存先<input id="modelDir" type="text" /></label>
+                <small id="modelDirDefault" class="field-note"></small>
+                <button type="button" class="secondary" id="modelDirSave">
+                  保存先を変更</button
+                ><button type="button" class="secondary" id="modelDirReset">
+                  既定に戻す
+                </button>
+              </div>
+
+              <label
+                >内蔵TTSのポート<input
+                  id="runtimePort"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  required
+              /></label>
+            </div>
+            <button>次回起動の設定を保存</button>
+          </form>
+          <p>
+            保存した設定はBridgeを再起動すると反映されます。声は保存先のvoicesフォルダーに保存されます。
+          </p>
+        </div>
+        <div class="part" id="providerSection">
+          <h3>Irodori接続先</h3>
+          <form id="providerForm">
+            <label
+              >接続先URL<input id="providerUrl" type="url" required /></label
+            ><button>接続先を保存</button
+            ><button type="button" id="testConnection">接続テスト</button>
+          </form>
+          <p id="providerNote" hidden>
+            外部サーバーで起動し直すと変更できます。今は内蔵TTSに接続しています。
+          </p>
+        </div>
+      </div>
+    </details>
+    <div id="extensions"></div>
+    <details class="step" id="stepCollector">
+      <summary>
+        <span class="step-num"></span
+        ><span class="step-title">Collectorの接続</span><small>卓へ入室後</small
+        ><span class="state" id="collectorState"></span>
+      </summary>
+      <div class="step-body">
+        <div class="part">
+          <h3>Collectorの導入</h3>
+          <p>
+            VTTのチャットメッセージを取得するChrome用の拡張機能を導入します。
+          </p>
+          <ol>
+            <li>
+              Chromeで新しいタブを開き、アドレスバーに<code>chrome://extensions</code>を入力して開く。<button
+                id="copyExtensionsUrl"
+                class="secondary"
+              >
+                コピー
+              </button>
+            </li>
+            <li>右上の「デベロッパーモード」をオンにする。</li>
+            <li>
+              「パッケージ化されていない拡張機能を読み込む」を押し、<code>collector</code>フォルダを選ぶ。ダウンロードしたアプリは展開したフォルダの中、ソースから起動した場合は<code>tts-bridge/collector</code>にある。
+            </li>
+            <li>
+              VTTのタブで拡張を開き「このタブを接続」を押す。初回は、拡張に表示された確認コードと同じものを、この画面の「Collectorの初回接続を承認」で承認する。
+            </li>
+          </ol>
+          <p class="muted">
+            拡張を更新したら、拡張機能の画面で再読み込みし、VTTのタブから接続し直す。
+          </p>
+        </div>
+        <div class="part" id="pairingSection" hidden>
+          <h3>Collectorの初回接続を承認</h3>
+          <p>
+            拡張機能に表示された確認コードと一致する接続を承認してください。
+          </p>
+          <div id="pairings"></div>
+        </div>
+        <div class="part">
+          <button id="releaseCollector" class="secondary">
+            Collectorの接続を解除</button
+          ><button id="revokeCollectors" class="secondary">
+            Collectorの承認を取り消す
+          </button>
+        </div>
+      </div>
+    </details>
+    <details class="step" id="stepSession">
+      <summary>
+        <span class="step-num"></span><span class="step-title">卓の開始</span
+        ><span class="state" id="sessionState"></span>
+      </summary>
+      <div class="step-body">
+        <div class="part">
+          <h3>参加者を招く</h3>
+          <button id="copyInvite">参加URLをコピー</button>
+          <button id="openPlayer">Playerを開く</button>
+          <p id="invite" class="muted"></p>
+          <p>キャラの声はPlayerで全員が設定できます。</p>
+          <button id="renewInvite" class="secondary">参加URLを再発行</button>
+        </div>
+        <div class="part">
+          <h3>読み上げ</h3>
+          <button id="toggle" disabled>読み上げ開始</button>
+          <p>押すと、以後の新しい発言を読み上げます。</p>
+        </div>
+      </div>
+    </details>
+    <details class="step" id="stepTuning">
+      <summary>
+        <span class="step-num"></span
+        ><span class="step-title">声と読み上げの調整</span
+        ><small>必要なら</small>
+      </summary>
+      <div class="step-body">
+        <div class="part">
+          <h3>チャットによる声登録</h3>
+          <label
+            ><input
+              id="chatVoiceRegistration"
+              type="checkbox"
+              aria-describedby="chatVoiceRegistrationHelp"
+            />チャットによる登録機能を有効にする</label
+          >
+          <p id="chatVoiceRegistrationHelp" class="muted">
+            チャットで「（ブリッジ声登録）若くて透き通るような女性の声。」のような発言キャラの声の自動登録コマンドを受け付ける。「（ブリッジ声削除）」で発言キャラの声の割り当てを解除し、声が未設定の状態に戻す。
+          </p>
+          <div id="voiceCommandDiagnostics"></div>
+        </div>
+        <div class="part">
+          <h3 id="deliveryCaptionHeading">感情・演技の指定方法</h3>
+          <select
+            id="deliveryCaptionMode"
+            aria-labelledby="deliveryCaptionHeading"
+          >
+            <option value="append">声の説明に追記型</option>
+            <option value="prepend">声の説明より前に</option>
+            <option value="replace">声の説明と置換（参照音声登録時）</option>
+          </select>
+          <p class="muted">
+            発言内の中カッコ内で指定した感情・演技の説明を、TTSサーバへ送信する際に、Playerが設定した声の説明(caption)の後ろに追加するか、前に追加するか、置き換えるかを選びます。
+            感情や演技の指定を行う際に、効果がなければ変更してみてください。次のセリフから反映します。
+          </p>
+        </div>
+        <div class="part">
+          <h3>長いセリフの分割</h3>
+          <label
+            >文の分割しきい値（文字）<input
+              id="sentenceSplitThreshold"
+              type="number"
+              min="1"
+              max="500"
+              step="1"
+              required
+          /></label>
+          <p class="muted">
+            絵文字と感情・演技タグを除いた本文がこの文字数を超えたときだけ、「。」「！」「？」や改行で分割します。この文字数以内はまとめて生成します。句読点と本文中の空白は文字数に含みます。次のセリフから反映します。
+          </p>
+          <label
+            >文と文の間（秒）<input
+              id="sentencePause"
+              type="number"
+              min="0"
+              max="3"
+              step="0.1"
+              required
+          /></label>
+          <p class="muted">
+            長いセリフを分割して生成・再生するときに、文と文の間に入れる無音の長さです。次のセリフから反映します。
+          </p>
+        </div>
+        <div class="part">
+          <h3>Playerの表示</h3>
+          <label
+            ><input
+              id="publishText"
+              type="checkbox"
+            />Playerにセリフの本文を表示する</label
+          >
+          <p class="muted">
+            オフにすると、Playerのログには話者名だけを表示します。次のセリフから反映します。
+          </p>
+        </div>
+      </div>
+    </details>
+    <details class="step" id="stepEnd">
+      <summary>
+        <span class="step-num"></span><span class="step-title">終了</span>
+      </summary>
+      <div class="step-body">
+        <div class="part">
+          <p>参加者とCollectorの接続を閉じます。</p>
+          <button id="endSession" class="danger">セッション終了</button>
+        </div>
+        <div class="part" id="shutdownSection" hidden>
+          <p id="shutdownNote" hidden>
+            内蔵の音声生成もアプリと一緒に停止します。
+          </p>
+          <button data-shutdown class="secondary">Bridgeを終了</button>
+        </div>
+      </div>
+    </details>
+    <details class="step" id="stepReset">
+      <summary><span class="step-title">初期化</span></summary>
+      <div class="step-body">
+        <div class="part">
+          <p>
+            キャラ・声・紐付けをconfigの初期値へ戻します。認証情報と接続設定は残ります。
+          </p>
+          <button id="resetSettings" class="danger">設定を初期値に戻す</button>
+        </div>
+      </div>
+    </details>
+    <details id="credits">
+      <summary>クレジット</summary>
+      <div id="creditsBody"></div>
     </details>
   </main>
   <script type="module" src="/web/admin.js"></script>
