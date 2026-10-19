@@ -1,3 +1,4 @@
+import { credits } from "./src/runtime/credits.mjs";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,9 @@ try {
     console.error("拡張を読み込めませんでした。Bridgeのみ起動します。");
 }
 await startBridge({
+  credits: credits(
+    readFileSync(new URL("../LICENSE", import.meta.url), "utf8"),
+  ),
   port,
   host,
   extensions,

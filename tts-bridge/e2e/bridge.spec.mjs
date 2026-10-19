@@ -29,7 +29,10 @@ test.beforeEach(async () => {
   app.engine.accepting = true;
   invite = (await command("invite")).url;
 });
-test.afterEach(async () => {
+test.afterEach(async ({ context }) => {
+  // Close the admin and its Player popup before waiting for the test server.
+  // Playwright normally disposes the context only after this hook returns.
+  await context.close();
   await app.close();
 });
 async function admin(path, method = "GET", body) {

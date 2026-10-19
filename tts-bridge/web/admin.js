@@ -1,3 +1,13 @@
+let modelState,
+  modelTimer,
+  modelRequest,
+  trackedPull,
+  modelsOpened = false,
+  modelBusy = false,
+  modelGeneration = 0;
+const pulling = (job) =>
+  ["starting", "running", "stopping"].includes(job?.status);
+const gb = (bytes) => (bytes / 1e9).toFixed(2);
 const $ = (id) => document.getElementById(id);
 let runtimeInitialized = false,
   runtimeState;
@@ -91,6 +101,7 @@ async function refresh() {
       $("runtimeModel").value = r.saved.model;
       $("runtimePort").value = r.saved.ttsPort;
       runtimeInitialized = true;
+      void refreshModels(true);
     }
     applyRuntimeView();
   }
@@ -370,7 +381,10 @@ await run(async () => {
   }
 });
 
-$("runtimeMode").onchange = applyRuntimeView;
+$("runtimeMode").onchange = () => {
+  applyRuntimeView();
+  void refreshModels(true);
+};
 $("runtimeForm").onsubmit = (event) => {
   event.preventDefault();
   run(async () => {
@@ -392,3 +406,185 @@ $("shutdownBridge").onclick = () =>
     $("runtimeStatus").textContent =
       "Bridgeを終了しています。この画面を閉じてからBridgeを起動し直してください。";
   });
+
+function modelStatus(message, error = false) {
+  $("catalogStatus").textContent = message;
+  $("catalogStatus").className = error ? "error" : "muted";
+  $("catalogStatus").hidden = !message;
+}
+function renderModels() {
+  if (!modelState) {
+    for (const id of ["modelDir", "modelDirSave", "modelDirReset"])
+      $(id).disabled = modelBusy;
+    return;
+  }
+  const { models, pull, dir, defaultDir } = modelState;
+  const selected = pulling(pull)
+    ? pull.choice
+    : $("catalogModel").value || "irodori-tts:q8_0";
+  $("catalogModel").replaceChildren(
+    ...models.map((m) => {
+      const suffix = m.fetched
+        ? "・取得済み"
+        : pulling(pull) && pull.choice === m.choice
+          ? "・ダウンロード中"
+          : m.partial
+            ? `・途中 ${Math.floor((m.partial / m.size) * 100)}%`
+            : "";
+      return new Option(`${m.label}（${gb(m.size)}GB）${suffix}`, m.choice);
+    }),
+  );
+  $("catalogModel").value = selected;
+  const m = models.find((m) => m.choice === selected) ?? models[0];
+  if (m) $("catalogModel").value = m.choice;
+  const busy = modelBusy || pulling(pull);
+  $("catalogModel").disabled = busy;
+  $("catalogLicense").hidden = !m?.gemma;
+  $("catalogUse").disabled = busy || !m;
+  $("catalogUse").textContent = pulling(pull)
+    ? "ダウンロード中…"
+    : m?.fetched
+      ? "このモデルを使う"
+      : m?.partial
+        ? "続きからダウンロードして使う"
+        : "ダウンロードして使う";
+  $("catalogCancel").hidden = !pulling(pull);
+  $("catalogCancel").disabled = modelBusy || pull?.status === "stopping";
+  $("catalogProgressRow").hidden = !pulling(pull);
+  if (pulling(pull) && m) {
+    $("catalogProgress").value = m.partial / m.size;
+    $("catalogProgressText").textContent =
+      `${gb(m.partial)} / ${gb(m.size)} GB（${Math.floor((m.partial / m.size) * 100)}%）`;
+  }
+  $("modelDir").disabled = busy;
+  $("modelDirSave").disabled = busy;
+  $("modelDirReset").disabled = busy || dir === defaultDir;
+  $("modelDirDefault").textContent = `既定: ${defaultDir}`;
+}
+async function refreshModels(opening = false) {
+  if (modelBusy) return;
+  if (modelRequest) return modelRequest;
+  clearTimeout(modelTimer);
+  const generation = modelGeneration;
+  modelRequest = (async () => {
+    try {
+      const data = await api("models");
+      if (generation !== modelGeneration) return;
+      if (!modelsOpened || modelState?.dir !== data.dir)
+        $("modelDir").value = data.dir;
+      if ((!modelsOpened || opening) && pulling(data.pull))
+        trackedPull = data.pull.id;
+      modelsOpened = true;
+      modelState = data;
+      $("catalogListError").hidden = true;
+      $("catalogBody").hidden = false;
+      if (trackedPull && data.pull?.id === trackedPull && !pulling(data.pull)) {
+        trackedPull = undefined;
+        if (data.pull.status === "done") {
+          $("runtimeModel").value = data.pull.path;
+          modelStatus(
+            "ダウンロードしました。「次回起動の設定を保存」を押してから、Bridgeを再起動してください。",
+          );
+        } else if (data.pull.status === "cancelled")
+          modelStatus(
+            "中止しました。もう一度押すと、続きからダウンロードします。",
+          );
+        else
+          modelStatus(data.pull.error || "ダウンロードに失敗しました。", true);
+      } else if (trackedPull && data.pull?.id !== trackedPull)
+        trackedPull = undefined;
+      renderModels();
+    } catch (e) {
+      if (generation !== modelGeneration) return;
+      $("catalogListError").textContent = e.message;
+      $("catalogListError").hidden = false;
+      // Keep cancellation available if polling temporarily fails mid-download.
+      $("catalogBody").hidden = !modelState;
+    } finally {
+      modelRequest = undefined;
+      if (!modelBusy && (pulling(modelState?.pull) || trackedPull))
+        modelTimer = setTimeout(() => refreshModels(), 1000);
+    }
+  })();
+  return modelRequest;
+}
+async function modelAction(fn) {
+  if (modelBusy) return;
+  modelBusy = true;
+  modelGeneration++;
+  clearTimeout(modelTimer);
+  renderModels();
+  try {
+    await fn();
+  } catch (e) {
+    modelStatus(e.message, true);
+  } finally {
+    modelBusy = false;
+    // Discard a pre-mutation response before requesting the new job snapshot.
+    await modelRequest;
+    await refreshModels();
+    renderModels();
+  }
+}
+$("catalogModel").onchange = () => {
+  modelStatus("");
+  renderModels();
+  void refreshModels();
+};
+$("catalogUse").onclick = () =>
+  modelAction(async () => {
+    const m = modelState.models.find(
+      (m) => m.choice === $("catalogModel").value,
+    );
+    if (m.fetched) {
+      $("runtimeModel").value = m.path;
+      modelStatus(
+        "パスを入れました。「次回起動の設定を保存」を押してから、Bridgeを再起動してください。",
+      );
+    } else {
+      modelStatus("");
+      const { id } = await api("models/pull", "POST", { choice: m.choice });
+      trackedPull = id;
+    }
+  });
+$("catalogCancel").onclick = () =>
+  modelAction(() => api("models/pull", "DELETE"));
+async function saveModelDir(dir) {
+  // Drain a prior poll so its old snapshot cannot overwrite the mutation result.
+  await modelRequest;
+  modelState = await api("models/dir", "PUT", { dir });
+  $("modelDir").value = modelState.dir;
+  modelStatus("");
+}
+$("modelDirSave").onclick = () =>
+  modelAction(() => saveModelDir($("modelDir").value.trim()));
+$("modelDirReset").onclick = () => modelAction(() => saveModelDir(""));
+let creditsLoaded = false;
+$("credits").addEventListener("toggle", async () => {
+  if (!$("credits").open || creditsLoaded) return;
+  try {
+    const data = await api("credits");
+    const nodes = data.entries.map((entry) => {
+      const section = document.createElement("section");
+      const title = document.createElement("h3");
+      title.textContent = entry.title;
+      const link = document.createElement("a");
+      link.href = entry.url;
+      link.textContent = entry.linkText;
+      link.target = "_blank";
+      link.rel = "noopener";
+      const note = document.createElement("p");
+      note.textContent = entry.note || "";
+      const license = document.createElement("pre");
+      license.textContent = entry.license;
+      section.append(title, link, note, license);
+      return section;
+    });
+    const footer = document.createElement("p");
+    footer.textContent = data.footer;
+    $("creditsBody").replaceChildren(...nodes, footer);
+    creditsLoaded = true;
+  } catch (e) {
+    $("creditsBody").textContent = e.message;
+  }
+});

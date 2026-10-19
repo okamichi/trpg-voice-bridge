@@ -94,6 +94,47 @@
             <label
               >GGUFモデルの絶対パス<input id="runtimeModel" type="text"
             /></label>
+            <small class="field-note"
+              >モデルを直接指定するか、一覧からダウンロードし、設定を保存してください。</small
+            >
+
+            <div id="catalog">
+              <h3>一覧からダウンロード</h3>
+              <p id="catalogListError" class="error" hidden></p>
+              <div id="catalogBody" hidden>
+                <label>モデル<select id="catalogModel"></select></label>
+                <p id="catalogLicense" hidden>
+                  <small
+                    >Irodori-TTS v4-Large は
+                    <a href="https://ai.google.dev/gemma/terms" target="_blank"
+                      >Gemmaの利用規約</a
+                    >に従います。</small
+                  >
+                </p>
+                <button type="button" id="catalogUse"></button
+                ><button
+                  type="button"
+                  class="secondary"
+                  id="catalogCancel"
+                  hidden
+                >
+                  中止
+                </button>
+                <div id="catalogProgressRow" hidden>
+                  <progress id="catalogProgress" max="1" value="0"></progress>
+                  <small id="catalogProgressText"></small>
+                </div>
+              </div>
+              <p id="catalogStatus" role="status" hidden></p>
+              <label>保存先<input id="modelDir" type="text" /></label>
+              <small id="modelDirDefault" class="field-note"></small>
+              <button type="button" class="secondary" id="modelDirSave">
+                保存先を変更</button
+              ><button type="button" class="secondary" id="modelDirReset">
+                既定に戻す
+              </button>
+            </div>
+
             <label
               >内蔵TTSのポート<input
                 id="runtimePort"
@@ -106,7 +147,7 @@
           <button>次回起動の設定を保存</button>
         </form>
         <p>
-          保存した設定はBridgeを再起動すると反映されます。モデルは別途用意してください。声は保存先のvoicesフォルダーに保存されます。
+          保存した設定はBridgeを再起動すると反映されます。声は保存先のvoicesフォルダーに保存されます。
         </p>
         <button id="shutdownBridge" type="button">Bridgeを終了</button>
       </section>
@@ -186,6 +227,10 @@
         </p>
         <button id="resetSettings" class="danger">設定を初期値に戻す</button>
       </section>
+    </details>
+    <details id="credits">
+      <summary>クレジット</summary>
+      <div id="creditsBody"></div>
     </details>
   </main>
   <script type="module" src="/web/admin.js"></script>

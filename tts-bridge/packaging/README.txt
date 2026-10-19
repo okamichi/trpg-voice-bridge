@@ -1,11 +1,11 @@
 TRPG Voice Bridge — ポータブルプレビュー
 
-speech.cppを同梱しています。モデルは別途用意してください。Bridgeはモデルを自動ダウンロードしません。
+speech.cppを同梱しています。管理画面の「TTSの起動設定」からモデルをダウンロードできます。
 初期設定は外部Irodori互換TTSへの接続です。管理画面で内蔵TTSとGGUFの絶対パスを保存し、Bridgeを再起動してください。
 Node.js / npmのインストールは利用者には不要です。
 trpg-voice-bridgeとruntime/、collector/を同じ配置のまま保管してください。
 
-モデルの取得（例: Irodori-TTS v4.1 Small のQ8_0、約1.2GB）:
+ターミナルからモデルを取得する場合（例: Irodori-TTS v4.1 Small のQ8_0、約1.2GB）:
   macOS: SPEECH_MODEL_DIR="$PWD/models" ./runtime/speech/speech pull irodori-tts:q8_0
   完了すると保存したGGUFの絶対パスを表示します。管理画面の「GGUFモデルの絶対パス」に貼り付けてください。
   SPEECH_MODEL_DIRを省略すると、OSのキャッシュフォルダへ保存します。

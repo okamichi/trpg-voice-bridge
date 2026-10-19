@@ -93,7 +93,13 @@ await build({
   },
   external: ["bufferutil", "utf-8-validate"],
 });
-const assets = {};
+const assets = {
+  "credits/TRPG-Voice-Bridge-LICENSE": join(root, "../LICENSE"),
+  "credits/speech.cpp-LICENSE": join(
+    root,
+    ".packaging/speech-runtime/speech.cpp-LICENSE",
+  ),
+};
 for (const file of readdirSync(join(root, "web"))) {
   if (/\.(html|js|css)$/.test(file))
     assets[`web/${file}`] = join(root, "web", file);

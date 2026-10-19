@@ -60,6 +60,8 @@ jobs:
       - name: Build SEA and audit package privacy
         run: npm run package:build
       - name: Test extracted package without Node on PATH
+        env:
+          SMOKE_NETWORK: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && '1' || '0' }}
         run: npm run package:smoke
       - uses: actions/upload-artifact@v7.0.2
         with:

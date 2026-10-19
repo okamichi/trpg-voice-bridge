@@ -1,3 +1,4 @@
+import { credits } from "../src/runtime/credits.mjs";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
@@ -123,6 +124,11 @@ async function main() {
   });
   await runtime.acquire();
   await startBridge({
+    credits: credits(
+      readAsset("credits/TRPG-Voice-Bridge-LICENSE").toString("utf8"),
+      readAsset("credits/speech.cpp-LICENSE").toString("utf8"),
+      JSON.parse(readAsset("build-info.json")).speech.speech,
+    ),
     runtime,
     onClose: () => runtime.close(),
     providerOptions: {

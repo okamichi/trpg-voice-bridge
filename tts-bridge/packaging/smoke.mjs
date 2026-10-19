@@ -9,7 +9,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
@@ -70,7 +70,10 @@ const env = Object.fromEntries(
     ([key]) => !/^(TTS_|NODE_|NAPI_RS_|DISCORD_)/.test(key),
   ),
 );
-env.PATH = "";
+env.PATH =
+  process.env.SMOKE_NETWORK === "1" && process.platform === "darwin"
+    ? "/usr/bin:/bin"
+    : "";
 let child,
   output = "",
   failure = "",
@@ -229,6 +232,96 @@ try {
   );
   db.close();
   await request("/api/v1/admin/config", "GET", undefined, "", 401);
+  const modelsPath = "/api/v1/admin/models";
+  for (const path of [modelsPath, "/api/v1/admin/credits"])
+    await request(path, "GET", undefined, "", 401);
+  const catalog = await request(modelsPath);
+  assert.equal(catalog.models.length, 8);
+  assert.ok(catalog.models.some((m) => m.choice === "irodori-tts:q8_0"));
+  assert.ok(catalog.models.some((m) => m.choice === "irodori-tts-large:q4_k"));
+  assert.ok(isAbsolute(catalog.defaultDir));
+  const modelDir = join(temporary, "日本語 models");
+  const changed = await request(`${modelsPath}/dir`, "PUT", { dir: modelDir });
+  assert.equal(changed.dir, modelDir);
+  assert.ok(changed.models.every((m) => !m.fetched));
+  const credits = await request("/api/v1/admin/credits");
+  assert.equal(credits.entries.length, 2);
+  assert.equal(
+    credits.entries[0].license,
+    readFileSync(join(packageDir, "LICENSE"), "utf8"),
+  );
+  assert.equal(
+    credits.entries[1].license,
+    readFileSync(join(packageDir, "runtime/speech/speech.cpp-LICENSE"), "utf8"),
+  );
+  const buildInfo = JSON.parse(
+    readFileSync(join(packageDir, "build-info.json")),
+  );
+  assert.equal(
+    credits.entries[1].url,
+    `https://github.com/${buildInfo.speech.speech.repository}/tree/${buildInfo.speech.speech.commit}`,
+  );
+  if (process.env.SMOKE_NETWORK === "1") {
+    const choice = "irodori-tts:q4_k";
+    const model = changed.models.find((m) => m.choice === choice);
+    async function waitModel(predicate) {
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        const state = await request(modelsPath);
+        if (state.pull?.status === "error") throw Error(state.pull.error);
+        if (predicate(state)) return state;
+        await delay(100);
+      }
+      throw Error("model download timed out");
+    }
+    const commands = () =>
+      process.platform === "win32"
+        ? execFileSync(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+            ],
+            { encoding: "utf8" },
+          )
+        : execFileSync("/bin/ps", ["-axo", "command"], { encoding: "utf8" });
+    for (const threshold of [16 * 1024 * 1024, 32 * 1024 * 1024]) {
+      const before = (await request(modelsPath)).models.find(
+        (m) => m.choice === choice,
+      ).partial;
+      // Cancellation can overshoot the threshold on a fast connection.
+      // Require new bytes on resume, even if the old partial already exceeds 32 MB.
+      const target = Math.max(threshold, before + 16 * 1024 * 1024);
+      await request(`${modelsPath}/pull`, "POST", { choice }, secret, 202);
+      await waitModel((state) => {
+        const partial = state.models.find((m) => m.choice === choice).partial;
+        assert.ok(
+          partial >= before,
+          "resume must preserve partial bytes on every poll",
+        );
+        return partial >= target;
+      });
+      await request(`${modelsPath}/pull`, "DELETE");
+      assert.equal((await request(modelsPath)).pull.status, "cancelled");
+      const remaining = commands();
+      assert.ok(!remaining.includes(model.url), "curl must be gone");
+      assert.ok(
+        !remaining.includes(join(dataDir, "model-pull.lock")),
+        "download supervisor must be gone",
+      );
+      assert.ok(
+        !remaining
+          .split(/\r?\n/)
+          .some(
+            (line) =>
+              line.includes(packageDir) && line.includes(`pull ${choice}`),
+          ),
+        "speech pull must be gone",
+      );
+    }
+  }
   const initial = await request("/api/v1/admin/config");
   assert.deepEqual(initial, initialConfig({}));
   const discord = await request("/api/v1/admin/ext/discord/status");

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
+import { SpeechModels } from "./models.mjs";
 import { RuntimeSettings, exposed } from "./settings.mjs";
 
 // Windows' STATUS_DLL_NOT_FOUND. The Vulkan build cannot start without the
@@ -33,10 +34,17 @@ export class SpeechRuntime {
     overrides,
     backends,
     startupTimeout = 180000,
+    speechProgram,
   }) {
     this.dataDir = dataDir;
     this.settings = new RuntimeSettings(dataDir, overrides, backends);
     this.runtimeDir = runtimeDir;
+    const suffix = process.platform === "win32" ? ".exe" : "";
+    this.models = new SpeechModels({
+      dataDir,
+      speech: speechProgram ?? [join(runtimeDir, `speech${suffix}`)],
+      supervisor: join(runtimeDir, `bridge-supervisor${suffix}`),
+    });
     this.startupTimeout = startupTimeout;
     this.status =
       this.settings.active.mode === "external" ? "external" : "stopped";
@@ -244,6 +252,7 @@ export class SpeechRuntime {
   }
   async close() {
     this.closing = true;
+    await this.models.close();
     if (!this.helper) return;
     this.helper.stdin.end("Q");
     await this.closed;

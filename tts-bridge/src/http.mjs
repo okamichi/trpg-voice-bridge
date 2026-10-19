@@ -56,6 +56,7 @@ export function createApp({
   publicOrigin = "",
   providerOptions = {},
   runtime,
+  credits = { entries: [], footer: "" },
   initial,
   loadDefaults,
   extensions = [],
@@ -507,6 +508,30 @@ export function createApp({
               }
             } else p.rejected = true;
             return json(res, 200, { ok: true });
+          }
+        }
+        if (path === "/api/v1/admin/credits" && method === "GET")
+          return json(res, 200, credits);
+        if (runtime && path.startsWith("/api/v1/admin/models")) {
+          try {
+            if (path === "/api/v1/admin/models" && method === "GET")
+              return json(res, 200, await runtime.models.list());
+            if (path === "/api/v1/admin/models/dir" && method === "PUT") {
+              await runtime.models.setDir((await body(req))?.dir);
+              return json(res, 200, await runtime.models.list());
+            }
+            if (path === "/api/v1/admin/models/pull" && method === "POST")
+              return json(
+                res,
+                202,
+                await runtime.models.pull((await body(req))?.choice),
+              );
+            if (path === "/api/v1/admin/models/pull" && method === "DELETE") {
+              await runtime.models.cancel();
+              return json(res, 200, { ok: true });
+            }
+          } catch (e) {
+            throw new HttpError(e.status ?? 500, e.message);
           }
         }
         if (runtime && path === "/api/v1/admin/runtime") {

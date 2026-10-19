@@ -261,3 +261,38 @@ th {
   white-space: nowrap;
   padding: 7px 10px;
 }
+
+[hidden] {
+  display: none !important;
+}
+/* パスの欄に入れる値を選ぶ補助なので、一段下げて左に線を引く */
+#catalog {
+  border-left: 2px solid var(--border);
+  margin: -4px 0 16px 18px;
+  padding: 2px 0 2px 16px;
+}
+#catalog h3 {
+  margin: 0 0 8px;
+}
+#catalogProgressRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 6px 0 4px;
+}
+#catalogProgressRow progress {
+  flex: 1;
+  height: 10px;
+  accent-color: var(--accent);
+}
+#catalogProgressRow small {
+  white-space: nowrap;
+}
+.error {
+  color: #ffb4c2;
+}
+.field-note {
+  display: block;
+  margin: -8px 0 10px;
+  overflow-wrap: anywhere;
+}
