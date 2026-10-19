@@ -79,7 +79,7 @@ async function main() {
   });
   if (values.help) {
     console.log(
-      "TRPG Voice Bridge (bundled TTS preview)\n--help --version --no-browser --data-dir <path> --port <1-65535> --self-test\n--tts <external|bundled> --model <absolute.gguf> --tts-port <1-65535>\n--tts-backend <vulkan|cpu> (Windows)",
+      "TRPG Voice Bridge\n--help --version --no-browser --data-dir <path> --port <1-65535> --self-test\n--tts <external|bundled> --model <absolute.gguf> --tts-port <1-65535>\n--tts-backend <vulkan|cpu> (Windows)",
     );
     return;
   }

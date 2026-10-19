@@ -81,7 +81,7 @@
       !globalThis.game?.ready
     )
       return fail(
-        "FVTT 12/13/14のロード完了したワールドが必要です。その他の版は検証待ちです",
+        "FVTT 12/13/14のワールドを開き、ロードが終わってから接続してください",
       );
     if (game.world?.id !== settings.contextId)
       return fail("ワールドが変わりました。拡張から再接続してください");
@@ -369,9 +369,7 @@
       observer.disconnect();
       clearInterval(timer);
     };
-    ready(
-      "ユドナリウム実験用 / 全員公開タブの新規キャラ発言のみ / キャラIDを使用。公開ビルド未検証",
-    );
+    ready("ユドナリウム / 全員公開タブの新規キャラ発言のみ");
   } else if (settings.adapter === "ccfolia") {
     try {
       const api = globalThis.__trpgCcfolia;

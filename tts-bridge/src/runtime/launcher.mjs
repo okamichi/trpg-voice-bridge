@@ -9,7 +9,7 @@ export async function startBridge({
 }) {
   let app;
   try {
-    app = createApp(options);
+    app = createApp({ ...options, onShutdown: () => signal() });
   } catch (e) {
     await onClose?.();
     throw e;
@@ -36,7 +36,6 @@ export async function startBridge({
     );
   };
   if (options.runtime) {
-    options.runtime.onShutdown = signal;
     options.runtime.onFatal = signal;
   }
   for (const name of ["SIGINT", "SIGTERM"]) process.once(name, signal);

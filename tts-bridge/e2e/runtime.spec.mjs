@@ -1,3 +1,4 @@
+import { openStep } from "./admin-helpers.mjs";
 import { test, expect } from "@playwright/test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,8 +27,11 @@ test("bundled runtime UI saves restart settings while keeping active mode and ex
   try {
     const url = app.adminUrl().replace(":0/", `:${app.server.address().port}/`);
     await page.goto(url);
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#runtimeStatus")).toContainText("起動失敗");
+    await expect(page.locator("#ttsState")).toHaveText("起動失敗");
+    await expect(page.locator("#shutdownNote")).toBeHidden();
+    await expect(page.locator("#shutdownSection")).toBeHidden();
     await expect(page.locator("#runtimeStatus")).toContainText(
       "接続先 http://127.0.0.1:18088",
     );
@@ -60,7 +64,7 @@ test("bundled runtime UI saves restart settings while keeping active mode and ex
       backend: "metal",
     });
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#runtimePort")).toHaveValue("18123");
     await expect(page.locator("#providerUrl")).toBeDisabled();
   } finally {
@@ -85,6 +89,7 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
   const app = createApp({
     dataDir,
     runtime,
+    onShutdown: () => {},
     localOrigin: "http://127.0.0.1:0",
     providerOptions: { resolveProvider: (saved) => runtime.provider(saved) },
   });
@@ -92,7 +97,10 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
   try {
     const url = app.adminUrl().replace(":0/", `:${app.server.address().port}/`);
     await page.goto(url);
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
+    await expect(
+      page.locator("#shutdownSection [data-shutdown]"),
+    ).toBeVisible();
     await expect(page.locator("#runtimeStatus")).toContainText(
       "内蔵speech.cpp（Vulkan）",
     );
@@ -107,6 +115,8 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
     await expect(page.locator("#bundledFields")).toBeVisible();
     await page.getByRole("button", { name: "次回起動の設定を保存" }).click();
     await expect(page.locator("#runtimeStatus")).toContainText("再起動が必要");
+    await expect(page.locator("#restartNotice")).toBeVisible();
+    await expect(page.locator("#restartNotice [data-shutdown]")).toBeVisible();
     expect(runtime.settings.saved).toEqual({
       mode: "bundled",
       model: "",
@@ -114,7 +124,7 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
       backend: "cpu",
     });
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#runtimeMode")).toHaveValue("bundled:cpu");
   } finally {
     await page.context().close();
@@ -164,7 +174,7 @@ test("model downloads resume across reload, apply completion once, cancel and ch
     await page.goto(
       app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
     );
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await page.locator("#runtimeMode").selectOption("bundled:metal");
     await expect(page.locator("#modelDir")).toHaveValue(
       join(dataDir, "既定 models"),
@@ -175,7 +185,7 @@ test("model downloads resume across reload, apply completion once, cancel and ch
     await page.locator("#catalogUse").click();
     await expect(page.locator("#catalogProgressRow")).toBeVisible();
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await page.locator("#runtimeMode").selectOption("bundled:metal");
     await expect(page.locator("#runtimeModel")).toHaveValue(
       /irodori-tts-q4_k.gguf$/,
@@ -186,7 +196,7 @@ test("model downloads resume across reload, apply completion once, cancel and ch
       join(dataDir, "manual.gguf"),
     );
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await page.locator("#runtimeMode").selectOption("bundled:metal");
     await expect(page.locator("#catalogModel option")).toHaveCount(8);
     await expect(page.locator("#runtimeModel")).toHaveValue("");
@@ -262,7 +272,7 @@ test("catalog errors preserve manual input and render planned states", async ({
     await page.goto(
       app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
     );
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#catalogUse")).toHaveText(
       "ダウンロードして使う",
     );
@@ -282,7 +292,7 @@ test("catalog errors preserve manual input and render planned states", async ({
     };
     small.partial = 450000000;
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#catalogProgressRow")).toBeVisible();
     await expect(page.locator("#modelDirSave")).toBeDisabled();
     await page
@@ -300,7 +310,7 @@ test("catalog errors preserve manual input and render planned states", async ({
     for (const status of ["cancelled", "done"]) {
       state.pull = { ...state.pull, id: status, status: "running" };
       await page.reload();
-      await page.getByText("詳細設定", { exact: true }).click();
+      await openStep(page, "stepTts");
       await expect(page.locator("#catalogProgressRow")).toBeVisible();
       state.pull = { ...state.pull, status, path: small.path };
       small.fetched = status === "done";
@@ -312,14 +322,14 @@ test("catalog errors preserve manual input and render planned states", async ({
         .screenshot({ path: testInfo.outputPath(`${status}.png`) });
     }
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#catalogUse")).toHaveText("このモデルを使う");
     await page
       .locator("#runtimeSection")
       .screenshot({ path: testInfo.outputPath("fetched.png") });
     error = true;
     await page.reload();
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#catalogListError")).toBeVisible();
     await page.locator("#runtimeModel").fill(join(dataDir, "manual.gguf"));
     await expect(page.locator("#runtimeModel")).toBeEditable();
@@ -393,7 +403,7 @@ test("idle catalog stays quiet, hides initial controls, and ignores pre-POST res
     await page.goto(
       app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
     );
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect.poll(() => Boolean(heldRoute)).toBe(true);
     await expect(page.locator("#catalogCancel")).toBeHidden();
     await expect(page.locator("#catalogProgressRow")).toBeHidden();
@@ -458,7 +468,7 @@ test("corrupt models.json can be repaired using visible directory controls", asy
     await page.goto(
       app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
     );
-    await page.getByText("詳細設定", { exact: true }).click();
+    await openStep(page, "stepTts");
     await expect(page.locator("#catalogListError")).toContainText(
       "models.json",
     );

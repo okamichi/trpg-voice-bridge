@@ -86,4 +86,4 @@ jobs:
       - name: Create draft prerelease for review
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Portable preview. Models must be supplied separately. macOS packages are not notarized; Windows packages are unsigned. See README.txt for startup instructions."
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Download TTS models from the admin screen. macOS packages are not notarized; Windows packages are unsigned. See README.txt for startup instructions."

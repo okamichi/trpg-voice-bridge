@@ -9,6 +9,22 @@ const pulling = (job) =>
   ["starting", "running", "stopping"].includes(job?.status);
 const gb = (bytes) => (bytes / 1e9).toFixed(2);
 const $ = (id) => document.getElementById(id);
+let stepsInitialized = false,
+  previousPending = 0,
+  refreshTimer,
+  shuttingDown = false;
+function numberSteps() {
+  document
+    .querySelectorAll("details.step:not([hidden]) .step-num")
+    .forEach((el, i) => {
+      el.textContent = i + 1;
+    });
+}
+function setState(el, text, kind = "") {
+  el.textContent = text;
+  el.className = `state ${kind}`;
+}
+numberSteps();
 let runtimeInitialized = false,
   runtimeState;
 let accepting = false,
@@ -39,7 +55,7 @@ async function run(fn) {
     $("notice").textContent = "";
     await fn();
   } catch (e) {
-    $("notice").textContent = e.message;
+    if (!shuttingDown) $("notice").textContent = e.message;
   }
 }
 // A menu value is "external" or "bundled:<backend>". The Bridge lists the
@@ -63,7 +79,44 @@ function applyRuntimeView() {
   $("providerNote").hidden = !bundled;
 }
 async function refresh() {
+  if (shuttingDown) return;
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
+  if (shuttingDown) return;
+  const ttsConnected = ![
+    "unreachable",
+    "error",
+    "starting",
+    "stopped",
+  ].includes(d.tts.status);
+  const collectorConnected = d.collectors.some((c) => c.online);
+  if (!stepsInitialized) {
+    $("stepTts").open = !ttsConnected;
+    $("stepCollector").open = !!pending.length || !collectorConnected;
+    $("stepSession").open = true;
+    $("stepEnd").open = true;
+    stepsInitialized = true;
+  } else if (!previousPending && pending.length) {
+    $("stepCollector").open = true;
+  }
+  previousPending = pending.length;
+  setState(
+    $("ttsState"),
+    ttsConnected ? "接続済み" : "未接続・準備中",
+    ttsConnected ? "ok" : "warn",
+  );
+  setState(
+    $("collectorState"),
+    pending.length ? "承認待ち" : collectorConnected ? "接続中" : "未接続",
+    !pending.length && collectorConnected ? "ok" : "warn",
+  );
+  setState(
+    $("sessionState"),
+    `読み上げ${d.accepting ? "中" : "停止中"} ／ 参加者 ${d.players.length} 接続`,
+    d.accepting ? "ok" : "",
+  );
+  $("restartNotice").hidden = !(d.runtime?.restartRequired && d.canShutdown);
+  $("shutdownSection").hidden = !d.canShutdown;
+  $("shutdownNote").hidden = !d.runtime || !d.canShutdown;
   if (d.runtime) {
     $("runtimeSection").hidden = false;
     const r = (runtimeState = d.runtime);
@@ -78,6 +131,12 @@ async function refresh() {
       ready: "準備完了",
       error: "起動失敗",
     };
+    if (r.active.mode === "bundled")
+      setState(
+        $("ttsState"),
+        states[r.status] ?? r.status,
+        r.status === "ready" ? "ok" : r.status === "error" ? "warn" : "",
+      );
     const parts =
       r.active.mode === "bundled"
         ? [
@@ -164,6 +223,16 @@ $("toggle").onclick = () =>
   run(async () => {
     await command(accepting ? "stop" : "start");
     await refresh();
+  });
+$("copyExtensionsUrl").onclick = () =>
+  run(async () => {
+    try {
+      await navigator.clipboard.writeText("chrome://extensions");
+      $("notice").textContent =
+        "chrome://extensions をコピーしました。新しいタブのアドレスバーに貼り付けて開いてください。";
+    } catch {
+      $("notice").textContent = "表示されたアドレスをコピーしてください。";
+    }
   });
 $("copyInvite").onclick = () =>
   run(async () => {
@@ -353,7 +422,10 @@ await run(async () => {
   $("sentencePause").value = sentencePauseMs / 1000;
   $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
   await refresh();
-  setInterval(() => run(refresh), 5000);
+  refreshTimer = setInterval(() => {
+    if (!shuttingDown) void run(refresh);
+  }, 5000);
+  let previousRow = $("connection").closest("tr");
   for (const extension of await api("extensions")) {
     const row = document.createElement("tr"),
       label = document.createElement("th"),
@@ -362,20 +434,31 @@ await run(async () => {
     label.textContent = extension.title;
     connectionStatus.textContent = "確認しています…";
     row.append(label, connectionStatus);
-    $("connectionRows").append(row);
-    const container = document.createElement("div");
-    $("extensions").append(container);
+    previousRow.after(row);
+    previousRow = row;
+    const step = document.createElement("details");
+    step.className = "step";
+    step.innerHTML =
+      '<summary><span class="step-num"></span><span class="step-title"></span><small>使う場合</small><span class="state"></span></summary><div class="step-body"></div>';
+    step.querySelector(".step-title").textContent = extension.title;
+    const state = step.querySelector(".state");
+    setState(state, "確認しています…");
+    const container = step.querySelector(".step-body");
+    $("extensions").append(step);
+    numberSteps();
     try {
       const { mount } = await import(extension.script);
       await mount(container, {
-        setConnectionStatus: (text) => {
+        setConnectionStatus: (text, kind) => {
           connectionStatus.textContent = text;
+          setState(state, text, kind);
         },
         api: (path, method, body) =>
           api(`ext/${extension.id}/${path}`, method, body),
       });
     } catch {
       connectionStatus.textContent = "読み込めませんでした";
+      setState(state, "読み込めませんでした", "warn");
       container.textContent = `${extension.title}: 読み込めませんでした`;
     }
   }
@@ -400,12 +483,19 @@ $("runtimeForm").onsubmit = (event) => {
     await refresh();
   });
 };
-$("shutdownBridge").onclick = () =>
-  run(async () => {
-    await api("shutdown", "POST", {});
-    $("runtimeStatus").textContent =
-      "Bridgeを終了しています。この画面を閉じてからBridgeを起動し直してください。";
-  });
+for (const button of document.querySelectorAll("[data-shutdown]"))
+  button.onclick = () =>
+    run(async () => {
+      await api("shutdown", "POST", {});
+      shuttingDown = true;
+      clearInterval(refreshTimer);
+      clearTimeout(modelTimer);
+      document.querySelectorAll("[data-shutdown]").forEach((el) => {
+        el.disabled = true;
+      });
+      $("notice").textContent =
+        "Bridgeを終了しています。この画面を閉じてからBridgeを起動し直してください。";
+    });
 
 function modelStatus(message, error = false) {
   $("catalogStatus").textContent = message;
@@ -462,7 +552,7 @@ function renderModels() {
   $("modelDirDefault").textContent = `既定: ${defaultDir}`;
 }
 async function refreshModels(opening = false) {
-  if (modelBusy) return;
+  if (modelBusy || shuttingDown) return;
   if (modelRequest) return modelRequest;
   clearTimeout(modelTimer);
   const generation = modelGeneration;
@@ -502,7 +592,11 @@ async function refreshModels(opening = false) {
       $("catalogBody").hidden = !modelState;
     } finally {
       modelRequest = undefined;
-      if (!modelBusy && (pulling(modelState?.pull) || trackedPull))
+      if (
+        !shuttingDown &&
+        !modelBusy &&
+        (pulling(modelState?.pull) || trackedPull)
+      )
         modelTimer = setTimeout(() => refreshModels(), 1000);
     }
   })();

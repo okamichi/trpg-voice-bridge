@@ -56,6 +56,7 @@ export function createApp({
   publicOrigin = "",
   providerOptions = {},
   runtime,
+  onShutdown,
   credits = { entries: [], footer: "" },
   initial,
   loadDefaults,
@@ -544,9 +545,13 @@ export function createApp({
           } else check(method === "GET", "許可されていない操作です", 405);
           return json(res, 200, runtime.snapshot());
         }
-        if (runtime && path === "/api/v1/admin/shutdown" && method === "POST") {
+        if (
+          onShutdown &&
+          path === "/api/v1/admin/shutdown" &&
+          method === "POST"
+        ) {
           json(res, 200, { ok: true });
-          setImmediate(() => runtime.onShutdown?.());
+          setImmediate(() => onShutdown());
           return;
         }
         if (path === "/api/v1/admin/diagnostics" && method === "GET") {
@@ -573,6 +578,7 @@ export function createApp({
           return json(res, 200, {
             ...engine.metadata(),
             ...(runtime ? { runtime: runtime.snapshot() } : {}),
+            canShutdown: Boolean(onShutdown),
             accepting: engine.accepting,
             tts,
             degraded: engine.degraded,

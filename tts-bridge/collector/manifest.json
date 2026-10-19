@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TRPG Voice Collector",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "VTTを変更せず、公開の新しいセリフをローカルbridgeへ接続します。",
   "permissions": [
     "activeTab",
