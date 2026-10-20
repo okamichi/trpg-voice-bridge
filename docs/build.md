@@ -159,7 +159,7 @@ npm run package:smoke
 | macOS   | `tts-bridge/dist/darwin-arm64/` | `tts-bridge/dist/trpg-voice-bridge-<version>-darwin-arm64.zip` |
 | Windows | `tts-bridge/dist/win32-x64/`    | `tts-bridge/dist/trpg-voice-bridge-<version>-win32-x64.zip`    |
 
-`<version>` は `tts-bridge/package.json` のバージョンです。ZIPのSHA-256は、同じ名前の `.zip.sha256` に書かれます。ZIPを展開すると `TRPG-Voice-Bridge/` フォルダがあります。中の実行ファイル・`runtime/`・`collector/` は、配置を変えずに使ってください。ZIPを受け取って使う人には、Node.js・CMake・Vulkan SDKは要りません。
+`<version>` は `tts-bridge/package.json` のバージョンです。ZIPのSHA-256は、同じ名前の `.zip.sha256` に書かれます。ZIPを展開すると `TRPG-Voice-Bridge/` フォルダがあります。中の実行ファイル・`runtime/`・`collector/`・`chatter/` は、配置を変えずに使ってください。ZIPを受け取って使う人には、Node.js・CMake・Vulkan SDKは要りません。
 
 ### 起動する
 
@@ -202,6 +202,12 @@ npm run package:smoke
 3. 「ボイスチャンネル」を選び、「接続」を押します。
 
 Aでは、2節の `npm --prefix discord ci` が必要です。Discordで聞く参加者は、Playerの音声を有効にしないでください。
+
+### チャットのないVTTでChatterを使う
+
+D&D Beyond の MapsVTT のようなチャット機能の無いシステムでも、Chromeの拡張機能でブラウザのサイドエリアで簡易チャット機能を追加できます。
+
+この場合は管理画面の担当者に次項の Collector は不要で、代わりに参加者全員が拡張機能の Chatter をインストールして Bridge サーバとの接続を行います。Aでは `npm run chatter:build` を実行し、Chromeに `tts-bridge/chatter/` を読み込みます。Bでは配布物の `chatter/` がビルド済みなので、そのまま読み込めます。導入と参加は[Chatterの手順](../tts-bridge/chatter/README.md)を参照してください。拡張が不要なら参加URLからPlayerを開いてチャットできます。
 
 ### Collectorを入れて接続する
 
@@ -299,9 +305,13 @@ Bでも、同じ環境変数を設定してから起動します。公開のし�
 
 Bridgeを終了してから新しいソースに替え、`tts-bridge/` で `npm ci` を実行します。AでDiscordを使う場合は `npm --prefix discord ci` も実行します。
 
-Bで実行ファイルを作り直すときは、`package:speech` → `package:build` → `package:smoke` の順に実行してください。ZIPを展開し直したら、Collectorも新しいフォルダから読み込み直します。今までのデータを使う場合は、同じ保存先を指定してください。
+Bで実行ファイルを作り直すときは、`package:speech` → `package:build` → `package:smoke` の順に実行してください。ZIPを展開し直したら、使用しているCollector・Chatterも新しいフォルダから読み込み直します。今までのデータを使う場合は、同じ保存先を指定してください。
+
+AでChatterのソースや共通Playerを更新したら `npm run chatter:build` を再実行してください。バージョンを変更するときは `package.json` を更新して `npm run version` を実行すると、Collector・ChatterのManifestとlockfileも同期します。`npm run version:check` はずれを検出します。
 
 ソースを変えた場合は、`npm test` と `npm run test:browser` で確かめられます。`test:browser` を初めて実行する前に `npx playwright install chromium` を実行してください。
+
+作成したZIPと同梱拡張をブラウザで検証する場合は、`npm run package:smoke:browser` を実行します。実行ファイルはNodeやnpmがPATHにない状態で起動し、配布版PlayerとChatterの双方向チャットを確認します。
 
 ### よくある問題
 

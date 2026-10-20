@@ -16,7 +16,9 @@
     "package:build": "node packaging/build.mjs",
     "package:smoke": "node packaging/smoke.mjs",
     "package:speech": "node packaging/build-speech.mjs",
-    "package:tts-smoke": "node packaging/tts-smoke.mjs"
+    "package:tts-smoke": "node packaging/tts-smoke.mjs",
+    "chatter:build": "node chatter/build.mjs",
+    "package:smoke:browser": "node packaging/smoke.mjs --browser"
   },
   "dependencies": {
     "ws": "^8.22.0"

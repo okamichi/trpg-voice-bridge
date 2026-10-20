@@ -95,6 +95,7 @@ test("public HTTP through a TCP forwarder supports joining, voice editing and pl
         ?.secure,
     ).toBe(false);
 
+    await page.getByRole("tab", { name: "キャラ・声設定" }).click();
     await page.getByRole("button", { name: "音声を有効にする" }).click();
     await page
       .locator("#characters .list-item")

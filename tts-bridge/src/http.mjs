@@ -9,6 +9,7 @@ import {
   saveCharacter,
   removeCharacter,
   removeVoiceProfile,
+  createCharacter,
 } from "./character-settings.mjs";
 import { Engine, DEFAULT_SENTENCE_PAUSE_MS } from "./engine.mjs";
 import { DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS } from "./sentences.mjs";
@@ -127,18 +128,52 @@ export function createApp({
         403,
       );
   }
+  const isExtensionOrigin = (value) =>
+    typeof value === "string" && /^chrome-extension:\/\/[a-p]{32}$/.test(value);
+  // Chrome may omit Origin on host-permitted extension fetches. The explicit
+  // header is bound at invitation exchange; a web Origin can never override it.
+  function chatterOrigin(req) {
+    const value = req.headers.origin ?? req.headers["x-chatter-origin"];
+    check(isExtensionOrigin(value), "Chatter拡張から接続してください", 403);
+    check(
+      !req.headers["x-chatter-origin"] ||
+        req.headers["x-chatter-origin"] === value,
+      "拡張のOriginが一致しません",
+      403,
+    );
+    return value;
+  }
+  function participantOrigin(req) {
+    if (req.headers.authorization) player(req);
+    else origin(req);
+  }
   function player(req) {
-    const token = (req.headers.cookie ?? "")
-      .split(";")
-      .map((x) => x.trim())
-      .find((x) => x.startsWith("trpg_player="))
-      ?.slice(12);
+    const bearer = req.headers.authorization;
+    const token = bearer
+      ? bearer.replace(/^Bearer /, "")
+      : cookie(req, "trpg_player");
     const p = players.get(hash(token ?? ""));
     check(
-      p && p.sessionId === engine.sessionId && p.expires > Date.now(),
+      p &&
+        !p.revoked &&
+        p.sessionId === engine.sessionId &&
+        p.roomId === store.config.roomId &&
+        p.expires > Date.now(),
       "参加資格が必要です",
       401,
     );
+    if (p.kind === "chatter") {
+      check(
+        bearer === `Bearer ${token}` &&
+          p.origin === chatterOrigin(req) &&
+          p.host === req.headers.host,
+        "別の拡張または接続先です",
+        403,
+      );
+    } else {
+      check(!bearer, "Cookie参加資格が必要です", 401);
+      origin(req);
+    }
     return p;
   }
   const admin = (req) => {
@@ -279,6 +314,9 @@ export function createApp({
         "/web/admin.js": ["admin.js", "text/javascript"],
         "/web/playback.js": ["playback.js", "text/javascript"],
         "/web/uuid.js": ["uuid.js", "text/javascript"],
+        "/web/bridge-client.js": ["bridge-client.js", "text/javascript"],
+        "/web/chat-history.js": ["chat-history.js", "text/javascript"],
+        "/web/chat-view.js": ["chat-view.js", "text/javascript"],
       };
       if (method === "GET" && staticFiles[path]) {
         if (path === "/admin/" || path === "/web/admin.js") origin(req, true);
@@ -476,10 +514,18 @@ export function createApp({
           store.change((c) => {
             store.compare(c.publishTextToPlayers, b.before);
             c.publishTextToPlayers = b.publishTextToPlayers;
+            if (b.before !== b.publishTextToPlayers)
+              store.chat.advanceGenerationInside();
           });
+          engine.chatPolicyChanged();
           return json(res, 200, {
             publishTextToPlayers: store.config.publishTextToPlayers,
           });
+        }
+        if (path === "/api/v1/admin/chat-history" && method === "DELETE") {
+          const result = store.chat.clear();
+          engine.chatPolicyChanged(true);
+          return json(res, 200, result);
         }
         if (path === "/api/v1/admin/pairings") {
           if (method === "GET")
@@ -687,8 +733,13 @@ export function createApp({
         }
         throw new HttpError(404, "管理APIが見つかりません");
       }
-      if (path === "/api/v1/join" && method === "POST") {
-        origin(req);
+      if (
+        ["/api/v1/join", "/api/v1/chatter/join"].includes(path) &&
+        method === "POST"
+      ) {
+        const extensionOrigin =
+          path === "/api/v1/chatter/join" ? chatterOrigin(req) : null;
+        if (!extensionOrigin) origin(req);
         const b = await body(req);
         const invite = invites.get(hash(b.invite ?? ""));
         check(
@@ -701,9 +752,21 @@ export function createApp({
         check(players.size < 200, "参加者上限です", 429);
         const token = randomBytes(32).toString("hex");
         players.set(hash(token), {
+          id: randomUUID(),
+          kind: extensionOrigin ? "chatter" : "player",
+          origin: extensionOrigin,
+          host: req.headers.host,
+          roomId: store.config.roomId,
           sessionId: engine.sessionId,
           expires: Date.now() + 12 * 3600000,
         });
+        if (extensionOrigin)
+          return json(res, 200, {
+            token,
+            roomId: store.config.roomId,
+            sessionId: engine.sessionId,
+            expires: players.get(hash(token)).expires,
+          });
         const secure =
           req.headers.host === new URL(publicOrigin || localOrigin).host &&
           (publicOrigin || localOrigin).startsWith("https:");
@@ -712,6 +775,59 @@ export function createApp({
           `trpg_player=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure ? "; Secure" : ""}`,
         );
         return json(res, 200, { roomId: store.config.roomId });
+      }
+      if (path === "/api/v1/leave" && method === "POST") {
+        participantOrigin(req);
+        const p = player(req);
+        p.revoked = true;
+        for (const [key, value] of players)
+          if (value === p) players.delete(key);
+        for (const [ws, conn] of connections)
+          if (conn.auth === p) ws.close(1000, "participant left");
+        if (p.kind !== "chatter")
+          res.setHeader(
+            "Set-Cookie",
+            "trpg_player=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+          );
+        return json(res, 200, { ok: true });
+      }
+      const chatRoute =
+        /^\/api\/v1\/rooms\/([\w.-]+)\/(messages|message-changes)$/.exec(path);
+      if (chatRoute) {
+        participantOrigin(req);
+        const p = player(req);
+        check(chatRoute[1] === store.config.roomId, "別の卓です", 403);
+        check(
+          store.config.publishTextToPlayers,
+          "チャットと本文の共有は停止中です",
+          403,
+        );
+        if (method === "POST" && chatRoute[2] === "messages") {
+          const input = await body(req);
+          player(req); // Authentication can expire while the body is arriving.
+          const result = engine.participantMessage(input, p);
+          return json(res, result.http, result);
+        }
+        if (method === "GET") {
+          engine.prune();
+          const query = new URL(req.url, localOrigin).searchParams;
+          const number = (name, fallback) =>
+            query.has(name) ? Number(query.get(name)) : fallback;
+          const result =
+            chatRoute[2] === "messages"
+              ? store.chat.list({
+                  before: number("before"),
+                  after: number("after"),
+                  limit: number("limit", 100),
+                })
+              : store.chat.changes({
+                  since: number("since"),
+                  generation: number("generation"),
+                  limit: number("limit", 100),
+                });
+          return json(res, 200, result);
+        }
+        throw new HttpError(405, "許可されていない操作です");
       }
       if (path.startsWith("/api/v1/collectors/") && method === "POST") {
         collector(req);
@@ -765,7 +881,7 @@ export function createApp({
           path,
         );
       if (settingsRoute) {
-        origin(req);
+        participantOrigin(req);
         player(req);
         check(settingsRoute[1] === store.config.roomId, "別の卓です", 403);
         if (method === "GET" && settingsRoute[2] === "characters")
@@ -773,9 +889,21 @@ export function createApp({
             ...characterSettings(store),
             voiceProfileUses: voiceProfileUses(),
           });
+        if (method === "POST" && settingsRoute[2] === "characters") {
+          const b = await body(req);
+          player(req);
+          const result = await idempotent(req, b, () => {
+            player(req);
+            const value = createCharacter(store, b);
+            engine.notify("characters.changed");
+            return { value };
+          });
+          return json(res, 201, result);
+        }
         if (method === "DELETE" && settingsRoute[4]) {
           const b = await body(req, 65536);
           const result = await idempotent(req, b, () => {
+            player(req);
             const previous = store.config;
             const value = removeVoiceProfile(
               store,
@@ -793,6 +921,7 @@ export function createApp({
         if (["PATCH", "DELETE"].includes(method) && settingsRoute[3]) {
           const b = await body(req, 65536);
           const result = await idempotent(req, b, () => {
+            player(req);
             const previous = store.config;
             const value =
               method === "DELETE"
@@ -808,12 +937,16 @@ export function createApp({
           return json(
             res,
             201,
-            await idempotent(req, b, () => registerVoice(b)),
+            await idempotent(req, b, () => {
+              player(req);
+              return registerVoice(b);
+            }),
           );
         }
         if (method === "POST" && settingsRoute[2] === "previews") {
           const b = await body(req);
           const preview = await idempotent(req, b, async () => {
+            player(req);
             voiceSchema(b.voice);
             const wav = await engine.preview(b.text, b.voice),
               id = randomUUID();
@@ -827,11 +960,17 @@ export function createApp({
       const room =
         /^\/api\/v1\/rooms\/([\w.-]+)\/(state|audio\/([\w-]+))$/.exec(path);
       if (room && method === "GET") {
-        origin(req);
         if (authAdmin(req)) admin(req);
-        else player(req);
+        else {
+          participantOrigin(req);
+          player(req);
+        }
         check(room[1] === store.config.roomId, "別の卓です", 403);
-        if (room[2] === "state") return json(res, 200, engine.snapshot());
+        if (room[2] === "state")
+          return json(res, 200, {
+            ...engine.snapshot(),
+            ...(!authAdmin(req) ? { participantId: player(req).id } : {}),
+          });
         const a = engine.audio.get(room[3]);
         check(
           a &&
@@ -879,11 +1018,18 @@ export function createApp({
       check(
         req.url === "/ws" &&
           hosts.has(req.headers.host) &&
-          origins.has(req.headers.origin),
+          (origins.has(req.headers.origin) ||
+            isExtensionOrigin(req.headers.origin)),
         "WS Originが不正です",
         403,
       );
-      const p = player(req);
+      const p = isExtensionOrigin(req.headers.origin) ? null : player(req);
+      if (!p)
+        check(
+          [...connections.values()].filter((c) => !c.auth).length < 10,
+          "認証待機上限",
+          429,
+        );
       check(wss.clients.size < 100, "接続上限", 429);
       wss.handleUpgrade(req, socket, head, (ws) =>
         wss.emit("connection", ws, req, p),
@@ -895,6 +1041,27 @@ export function createApp({
   const send = (ws, data) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (ws.bufferedAmount > 1024 * 1024) return ws.close(1013, "slow client");
+    // Recheck at delivery, including old notifications replayed on reconnect.
+    if (data.type?.startsWith("chat.message.")) {
+      if (
+        !store.config.publishTextToPlayers ||
+        data.generation !== store.chat.metadata().generation ||
+        (data.message && !store.chat.get(data.message.id))
+      )
+        data = {
+          ...engine.metadata(),
+          notificationSeq: data.notificationSeq,
+          type: "chat.redacted",
+        };
+    }
+    if (
+      (!store.config.publishTextToPlayers ||
+        (data.messageId && !store.chat.get(data.messageId))) &&
+      data.text
+    ) {
+      const { text, ...withoutText } = data;
+      data = withoutText;
+    }
     ws.send(JSON.stringify(data));
   };
   wss.on("connection", (ws, req, p) => {
@@ -910,8 +1077,26 @@ export function createApp({
     ws.on("message", (data) => {
       try {
         const b = JSON.parse(data);
+        if (!p) {
+          check(
+            b.type === "hello" && typeof b.token === "string",
+            "認証が必要です",
+            401,
+          );
+          p = player({
+            headers: {
+              ...req.headers,
+              cookie: undefined,
+              authorization: `Bearer ${b.token}`,
+            },
+          });
+          conn.auth = p;
+        }
         check(
-          p.sessionId === engine.sessionId && p.expires > Date.now(),
+          !p.revoked &&
+            p.roomId === store.config.roomId &&
+            p.sessionId === engine.sessionId &&
+            p.expires > Date.now(),
           "参加資格が失効しました",
           401,
         );
@@ -923,8 +1108,8 @@ export function createApp({
           );
           conn.clientId = b.clientId;
           const resume = b.resume,
-            last = disconnects.get(hash(req.headers.cookie ?? "") + b.clientId);
-          disconnects.delete(hash(req.headers.cookie ?? "") + b.clientId);
+            last = disconnects.get(p.id + b.clientId);
+          disconnects.delete(p.id + b.clientId);
           const canResume =
             last &&
             Date.now() - last < 10000 &&
@@ -940,6 +1125,7 @@ export function createApp({
           send(ws, {
             ...engine.metadata(),
             type: "hello",
+            participantId: p.id,
             serverTime: Date.now(),
             baseline: engine.store.maxSeq(),
             resumed: !!canResume,
@@ -982,16 +1168,15 @@ export function createApp({
     ws.on("close", () => {
       clearTimeout(deadline);
       connections.delete(ws);
-      if (conn.clientId)
-        disconnects.set(
-          hash(req.headers.cookie ?? "") + conn.clientId,
-          Date.now(),
-        );
+      if (conn.clientId) disconnects.set(p.id + conn.clientId, Date.now());
     });
   });
   engine.on("notification", (n) => {
     for (const [ws, c] of connections) {
+      if (!c.auth) continue;
       if (
+        c.auth.revoked ||
+        c.auth.roomId !== store.config.roomId ||
         c.auth.expires <= Date.now() ||
         c.auth.sessionId !== engine.sessionId
       ) {
@@ -1004,8 +1189,11 @@ export function createApp({
   const heartbeat = setInterval(() => {
     const now = Date.now();
     for (const [ws, c] of connections) {
+      if (!c.auth) continue;
       if (
         now - c.seen > 60000 ||
+        c.auth.revoked ||
+        c.auth.roomId !== store.config.roomId ||
         c.auth.expires <= now ||
         c.auth.sessionId !== engine.sessionId
       ) {

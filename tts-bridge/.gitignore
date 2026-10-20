@@ -6,3 +6,7 @@ playwright-report/
 *.log
 .packaging/
 dist/
+
+# Generated from shared Player sources by npm run chatter:build
+chatter/shared/
+chatter/panel.html

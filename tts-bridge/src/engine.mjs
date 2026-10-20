@@ -18,6 +18,7 @@ import {
   eventSchema,
   eventKey,
   sourceKey,
+  participantMessageSchema,
 } from "./contracts.mjs";
 import { synthesize, inspectWav, AUDIO_LIMIT } from "./provider.mjs";
 import { splitLongUtterance } from "./sentences.mjs";
@@ -51,6 +52,7 @@ export class Engine extends EventEmitter {
       (this.options.fetchImpl ?? fetch)(...args),
     );
     this.chatVoices = new ChatVoices(this);
+    this.store.chat.recover();
     this.timer = setInterval(() => this.prune(), 30000);
     this.timer.unref();
   }
@@ -70,6 +72,8 @@ export class Engine extends EventEmitter {
       roomId: this.config.roomId,
       playbackEpoch: this.playbackEpoch,
       notificationSeq: this.notificationSeq,
+      chatGeneration: this.store.chat.metadata().generation,
+      chatEnabled: this.config.publishTextToPlayers,
     };
   }
   notify(type, fields = {}) {
@@ -93,6 +97,7 @@ export class Engine extends EventEmitter {
       serverTime: Date.now(),
       baseline: this.store.maxSeq(),
       accepting: this.accepting,
+      chat: this.store.chat.metadata(),
       orders: [...this.orders.values()]
         .filter((o) => o.epoch === this.playbackEpoch)
         .map((o) => ({
@@ -109,10 +114,19 @@ export class Engine extends EventEmitter {
     return {
       orderId: o.orderId,
       orderSeq: o.orderSeq,
+      playbackEpoch: o.epoch,
       status: o.status,
       characterId: o.characterId,
       speakerName: o.speakerName,
       error: o.error,
+      ...(o.chatTextCleared ? { chatDeleted: true } : {}),
+      ...(o.chatMessageId
+        ? {
+            messageId: o.chatMessageId,
+            chatDeleted:
+              o.chatTextCleared || !this.store.chat.get(o.chatMessageId),
+          }
+        : {}),
       ...(o.parts > 1
         ? {
             groupId: o.groupId,
@@ -195,6 +209,8 @@ export class Engine extends EventEmitter {
     const fingerprint = createHmac("sha256", this.store.secrets.hmac)
       .update(canonical(normalized))
       .digest("hex");
+    const chatPrior = this.store.chat.lookup(key, fingerprint);
+    if (chatPrior) return { ...chatPrior, http: 200 };
     const prior = this.store.lookup(key);
     if (prior) {
       check(
@@ -210,14 +226,7 @@ export class Engine extends EventEmitter {
         status: prior.status,
       };
     }
-    const now = Date.now();
-    this.rate.tokens = Math.min(
-      30,
-      this.rate.tokens + (now - this.rate.updated) / 100,
-    );
-    this.rate.updated = now;
-    check(this.rate.tokens >= 1, "入力頻度が高すぎます", 429);
-    this.rate.tokens--;
+    this.consumeInput();
     const command = voiceCommand(e.text);
     if (command) return this.chatVoices.accept(e, key, fingerprint, command);
     if (
@@ -227,6 +236,155 @@ export class Engine extends EventEmitter {
       return { http: 200, status: "ignored", reason: "対象外チャネル・種別" };
     const { character: ch, created } = this.store.discover(e);
     if (created) this.notify("characters.changed");
+    return this.acceptChat(
+      key,
+      fingerprint,
+      {
+        sessionId: this.sessionId,
+        characterId: ch?.id ?? null,
+        speakerName: ch?.displayName ?? e.speaker.name,
+        text: e.text,
+        source: "Collector",
+        sourceMessage: e.source,
+      },
+      ch,
+    );
+  }
+  consumeInput() {
+    const now = Date.now();
+    this.rate.tokens = Math.min(
+      30,
+      this.rate.tokens + (now - this.rate.updated) / 100,
+    );
+    this.rate.updated = now;
+    check(this.rate.tokens >= 1, "入力頻度が高すぎます", 429);
+    this.rate.tokens--;
+  }
+  participantMessage(input, participant) {
+    check(
+      this.config.publishTextToPlayers,
+      "チャットと本文の共有は停止中です",
+      403,
+    );
+    check(
+      input?.sessionId === this.sessionId,
+      "セッションが失効しています",
+      409,
+    );
+    participantMessageSchema(input);
+    const key = canonical([
+      "participant",
+      this.config.roomId,
+      participant.id,
+      input.clientMessageId,
+    ]);
+    const fingerprint = createHmac("sha256", this.store.secrets.hmac)
+      .update(
+        canonical({
+          characterId: input.characterId,
+          text: input.text,
+          sessionId: input.sessionId,
+        }),
+      )
+      .digest("hex");
+    const prior = this.store.chat.lookup(key, fingerprint);
+    if (prior) return { ...prior, http: 200 };
+    const ch = this.config.characters.find((c) => c.id === input.characterId);
+    check(ch, "この卓のキャラが見つかりません", 404);
+    this.consumeInput();
+    return this.acceptChat(
+      key,
+      fingerprint,
+      {
+        sessionId: this.sessionId,
+        participantId: participant.id,
+        clientMessageId: input.clientMessageId,
+        characterId: ch.id,
+        speakerName: ch.displayName,
+        text: input.text,
+        source: participant.kind === "chatter" ? "Chatter" : "Player",
+      },
+      ch,
+    );
+  }
+  acceptChat(key, fingerprint, data, ch) {
+    const result = this.store.chat.accept(key, fingerprint, data);
+    if (result.duplicate) return { ...result, http: 200 };
+    this.notify(result.change.type, result.change);
+    let audioResult;
+    try {
+      audioResult = this.queueSpeech(
+        data.text,
+        ch,
+        key,
+        fingerprint,
+        result.messageId,
+      );
+      if (audioResult.status === "ignored")
+        this.updateChat(result.messageId, {
+          audioStatus: "ignored",
+          audioReason: audioResult.reason,
+        });
+    } catch (error) {
+      // The message has committed. TTS failures must not make clients resend it.
+      for (const o of this.orders.values())
+        if (o.chatMessageId === result.messageId && o.status === "queued")
+          this.skip(o, "failed", error.message);
+      this.updateChat(result.messageId, {
+        audioStatus: "failed",
+        audioReason: error.message,
+      });
+      audioResult = { status: "failed", reason: error.message };
+    }
+    delete result.change;
+    for (const change of this.store.chat.prune(this.sessionId))
+      this.notify(change.type, change);
+    const response = {
+      ...result,
+      ...audioResult,
+      http:
+        data.source === "Collector"
+          ? audioResult.status === "queued"
+            ? 202
+            : 200
+          : 201,
+    };
+    this.store.chat.completeReceipt(key, response);
+    return response;
+  }
+  chatPolicyChanged(clear = false) {
+    // Never replay notifications containing bodies from a previous generation.
+    this.history = [];
+    if (clear)
+      for (const o of this.orders.values()) {
+        o.chatTextCleared = true;
+        delete o.displayText;
+        if (!["queued", "synthesizing"].includes(o.status)) delete o.text;
+      }
+    this.notify("chat.reset", { chat: this.store.chat.metadata() });
+  }
+  updateChat(messageId, fields) {
+    const change = this.store.chat.update(messageId, fields);
+    if (change) this.notify(change.type, change);
+  }
+  updateChatAudio(messageId) {
+    if (!messageId) return;
+    const orders = [...this.orders.values()].filter(
+      (o) => o.chatMessageId === messageId && !o.reuseAudioId,
+    );
+    if (!orders.length) return;
+    const statuses = orders.map((o) => o.status);
+    const status =
+      ["failed", "cancelled", "expired", "synthesizing", "queued"].find((s) =>
+        statuses.includes(s),
+      ) ?? "ready";
+    this.updateChat(messageId, {
+      audioStatus: status,
+      audioOrders: orders.map((o) => this.publicOrder(o)),
+      audioReason: orders.find((o) => o.error)?.error ?? null,
+    });
+  }
+  queueSpeech(text, ch, key, fingerprint, chatMessageId) {
     const enabled = this.accepting && ch?.enabled && ch.voiceProfileId;
     const orderId = randomUUID(),
       status = enabled ? "queued" : "ignored";
@@ -254,12 +412,9 @@ export class Engine extends EventEmitter {
       };
     let parts;
     try {
-      parts = splitLongUtterance(
-        e.text,
-        this.config.sentenceSplitThresholdChars,
-      );
+      parts = splitLongUtterance(text, this.config.sentenceSplitThresholdChars);
     } catch {
-      parts = [{ text: e.text, display: e.text.trim() }];
+      parts = [{ text, display: text.trim() }];
     }
     const voice = this.config.voiceProfiles.find(
         (v) => v.id === ch.voiceProfileId,
@@ -279,6 +434,7 @@ export class Engine extends EventEmitter {
           : orderSeq,
         o = {
           orderId: id,
+          chatMessageId,
           orderSeq: seq,
           status,
           characterId: ch.id,
@@ -298,6 +454,7 @@ export class Engine extends EventEmitter {
       this.orders.set(id, o);
       this.queue.push(o);
     });
+    this.updateChatAudio(chatMessageId);
     this.pump();
     return {
       http: 202,
@@ -390,7 +547,12 @@ export class Engine extends EventEmitter {
   setStatus(o, status, error) {
     o.status = status;
     o.error = error;
+    if (o.chatTextCleared && !["queued", "synthesizing"].includes(status)) {
+      delete o.text;
+      delete o.displayText;
+    }
     this.store.status(o.orderId, status);
+    this.updateChatAudio(o.chatMessageId);
   }
   skip(o, status = "cancelled", error) {
     if (
@@ -503,12 +665,11 @@ export class Engine extends EventEmitter {
       this.setStatus(o, "ready");
       this.notify("audio.ready", {
         ...this.publicOrder(o),
-        ...(this.config.publishTextToPlayers
+        ...(this.config.publishTextToPlayers && !o.chatTextCleared
           ? { text: o.displayText ?? o.text }
           : {}),
       });
-      // Text stays in memory with the order until prune() so a reloaded
-      // Player can rebuild its log; it is never written to SQLite.
+      // Chat text is durable; audio order text remains only for the audio lifetime.
     } catch (e) {
       const timeout = e.name === "TimeoutError";
       this.lastError = timeout
@@ -616,6 +777,9 @@ export class Engine extends EventEmitter {
     const now = Date.now();
     for (const [id, a] of this.audio)
       if (a.retainUntil < now) {
+        for (const o of this.orders.values())
+          if (o.ready?.audio.id === id && o.status === "ready")
+            this.setStatus(o, "expired");
         try {
           unlinkSync(a.file);
         } catch {}
@@ -628,6 +792,8 @@ export class Engine extends EventEmitter {
       )
         this.orders.delete(id);
     this.store.prune();
+    for (const change of this.store.chat.prune(this.sessionId))
+      this.notify(change.type, change);
   }
   close() {
     this.chatVoices.shutdown();

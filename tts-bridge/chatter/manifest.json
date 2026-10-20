@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "TRPG Voice Bridge Chatter",
+  "version": "0.4.0",
+  "description": "VTTの隣で使えるキャラチャットと音声再生。Collectorは不要です。",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Chatterを開く" },
+  "side_panel": { "default_path": "panel.html" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'"
+  }
+}

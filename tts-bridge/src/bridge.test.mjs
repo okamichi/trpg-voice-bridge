@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -92,9 +92,7 @@ test("persistent source-key dedupe ignores eventId and session, rejects content 
     ).status,
     "cancelled",
   );
-  assert.ok(
-    !readFileSync(join(dir, "bridge.sqlite")).includes(Buffer.from(e.text)),
-  );
+  assert.equal(other.chat.get(a.messageId).text, e.text);
 });
 test("same text with different message IDs generates separate audio for each new message", async (t) => {
   const { engine } = setup(t);
@@ -302,9 +300,9 @@ test("failure lets next order advance; timeout requires explicit recovery", asyn
   engine.ingress(event(engine, "three", "別の文"), "one");
   await idle(engine);
   assert.equal(engine.degraded, true);
-  assert.throws(() => engine.ingress(event(engine, "four"), "one"), {
-    status: 503,
-  });
+  const accepted = engine.ingress(event(engine, "four"), "one");
+  assert.equal(accepted.status, "failed");
+  assert.equal(store.chat.get(accepted.messageId).text, "こんにちは");
 });
 test("accepted speech keeps its voice snapshot; next speech uses saved changes", async (t) => {
   const { engine, store } = setup(t);
@@ -321,9 +319,11 @@ test("accepted speech keeps its voice snapshot; next speech uses saved changes",
   );
   assert.equal(engine.audio.size, 2);
 });
-test("capacity backpressure and strict WAV validation", (t) => {
-  const { engine } = setup(t, { maxAudioBytes: 100 });
-  assert.throws(() => engine.ingress(event(engine), "one"), { status: 429 });
+test("audio capacity failure preserves accepted chat; strict WAV validation", (t) => {
+  const { engine, store } = setup(t, { maxAudioBytes: 100 });
+  const accepted = engine.ingress(event(engine), "one");
+  assert.equal(accepted.status, "failed");
+  assert.equal(store.chat.get(accepted.messageId).audioStatus, "failed");
   assert.ok(inspectWav(mockWav()).durationMs > 0);
   const broken = mockWav();
   broken.writeUInt32LE(1, 28);
@@ -1167,8 +1167,8 @@ test("player registers only a bridge-generated preview as a new reference voice"
   assert.equal((await register({ previewId, voiceId: "race" })).status, 409);
 });
 
-test("snapshot keeps generated text in memory for the Player log only while published", async (t) => {
-  const { engine, store, dir } = setup(t);
+test("snapshot publishes text only while enabled; durable chat outlives audio", async (t) => {
+  const { engine, store } = setup(t);
   const r = engine.ingress(event(engine, "log", "ログに残るセリフ"), "one");
   await idle(engine);
   const ready = () =>
@@ -1183,11 +1183,7 @@ test("snapshot keeps generated text in memory for the Player log only while publ
     engine.publicOrder(engine.orders.get(r.orderId)).text,
     undefined,
   );
-  for (const f of ["bridge.sqlite", "bridge.sqlite-wal"])
-    if (existsSync(join(dir, f)))
-      assert.ok(
-        !readFileSync(join(dir, f)).includes(Buffer.from("ログに残るセリフ")),
-      );
+  assert.equal(store.chat.get(r.messageId).text, "ログに残るセリフ");
   store.change((c) => {
     c.publishTextToPlayers = false;
   });
@@ -1200,6 +1196,7 @@ test("snapshot keeps generated text in memory for the Player log only while publ
   engine.audio.get(o.ready.audio.id).retainUntil = 0;
   engine.prune();
   assert.equal(ready(), undefined);
+  assert.equal(store.chat.get(r.messageId).text, "ログに残るセリフ");
   const s = engine.ingress(event(engine, "after-reset", "停止で消える"), "one");
   await idle(engine);
   engine.reset();

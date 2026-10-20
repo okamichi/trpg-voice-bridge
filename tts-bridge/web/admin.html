@@ -137,14 +137,15 @@
     <details class="step" id="stepCollector">
       <summary>
         <span class="step-num"></span
-        ><span class="step-title">Collectorの接続</span><small>卓へ入室後</small
+        ><span class="step-title">Collectorの接続</span
+        ><small>VTTから取り込む場合のみ</small
         ><span class="state" id="collectorState"></span>
       </summary>
       <div class="step-body">
         <div class="part">
           <h3>Collectorの導入</h3>
           <p>
-            VTTのチャットメッセージを取得するChrome用の拡張機能を導入します。
+            VTTの既存チャットを取り込む場合に導入します。Playerで直接チャットする場合は、インストール・接続ともに不要です。
           </p>
           <ol>
             <li>
@@ -195,6 +196,12 @@
           <button id="openPlayer">Playerを開く</button>
           <p id="invite" class="muted"></p>
           <p>キャラの声はPlayerで全員が設定できます。</p>
+          <p>
+            チャット機能のないVTTでは、参加者がPlayerでキャラを作成して発言できます。CollectorやTTSの準備が終わっていなくてもチャットを使えます。
+          </p>
+          <p class="muted">
+            Chatter拡張でも、この参加URLを入力して同じ卓へ参加できます。Collectorは不要です。
+          </p>
           <button id="renewInvite" class="secondary">参加URLを再発行</button>
         </div>
         <div class="part">
@@ -268,15 +275,21 @@
           </p>
         </div>
         <div class="part">
-          <h3>Playerの表示</h3>
+          <h3>チャットと本文の共有</h3>
           <label
             ><input
               id="publishText"
               type="checkbox"
-            />Playerにセリフの本文を表示する</label
+            />チャットとセリフの本文を共有する</label
           >
           <p class="muted">
-            オフにすると、Playerのログには話者名だけを表示します。次のセリフから反映します。
+            オフにするとチャットの送信・履歴の閲覧を停止し、表示中のログを消します。Collectorの音声生成は継続します。本文は直近7日・最大10,000件まで保存され、オンに戻すと保持範囲内の履歴を取得できます。
+          </p>
+          <button type="button" class="danger" id="clearChatHistory">
+            卓のチャット履歴を消去
+          </button>
+          <p class="muted">
+            卓全体の本文を消去し、参加者の表示にも反映します。読み上げ停止・音声削除とは別の操作です。
           </p>
         </div>
       </div>
@@ -287,7 +300,7 @@
       </summary>
       <div class="step-body">
         <div class="part">
-          <p>参加者とCollectorの接続を閉じます。</p>
+          <p>参加者とCollectorの接続を閉じます。チャット履歴は残ります。</p>
           <button id="endSession" class="danger">セッション終了</button>
         </div>
         <div class="part" id="shutdownSection" hidden>

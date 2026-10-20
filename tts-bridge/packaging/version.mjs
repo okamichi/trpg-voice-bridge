@@ -14,7 +14,7 @@ export function projectVersion() {
     version === "0.0.0"
   )
     throw Error(
-      "BridgeとCollectorの共通バージョンはX.Y.Z（各0～65535、全て0は不可）で指定してください",
+      "Bridge・Collector・Chatterの共通バージョンはX.Y.Z（各0～65535、全て0は不可）で指定してください",
     );
   return version;
 }
@@ -24,11 +24,12 @@ export function checkProjectVersion() {
   const lock = readJson("package-lock.json");
   if (
     readJson("collector/manifest.json").version !== version ||
+    readJson("chatter/manifest.json").version !== version ||
     lock.version !== version ||
     lock.packages[""].version !== version
   )
     throw Error(
-      "バージョンが一致しません。npm run versionでCollectorとlockfileを同期してください",
+      "バージョンが一致しません。npm run versionでCollector・Chatterとlockfileを同期してください",
     );
   if (
     process.env.GITHUB_REF_TYPE === "tag" &&
@@ -40,7 +41,11 @@ export function checkProjectVersion() {
 
 function synchronizeVersions() {
   const version = projectVersion();
-  for (const name of ["collector/manifest.json", "package-lock.json"]) {
+  for (const name of [
+    "collector/manifest.json",
+    "chatter/manifest.json",
+    "package-lock.json",
+  ]) {
     const data = readJson(name);
     if (
       data.version === version &&

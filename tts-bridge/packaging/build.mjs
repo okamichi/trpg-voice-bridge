@@ -19,6 +19,7 @@ import { initialConfig } from "../src/store.mjs";
 import { assertPackagePrivacy, snapshotUpstreamBinaries } from "./privacy.mjs";
 import { supplementLicenses } from "./licenses.mjs";
 import { checkProjectVersion } from "./version.mjs";
+import { buildChatter } from "../chatter/build.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const required = readFileSync(
@@ -156,6 +157,7 @@ if (process.platform === "darwin") {
   execFileSync("codesign", ["--verify", "--strict", exe]);
 }
 cpSync(join(root, "collector"), join(stage, "collector"), { recursive: true });
+await buildChatter(join(stage, "chatter"));
 cpSync(join(root, "../LICENSE"), join(stage, "LICENSE"));
 cpSync(join(root, "packaging/README.txt"), join(stage, "README.txt"));
 cpSync(join(work, "build-info.json"), join(stage, "build-info.json"));
