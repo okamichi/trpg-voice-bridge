@@ -1,6 +1,6 @@
 import { openStep } from "./admin-helpers.mjs";
 import { test, expect } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/http.mjs";
@@ -138,13 +138,23 @@ test("model downloads resume across reload, apply completion once, cancel and ch
   page,
 }) => {
   const { resolve } = await import("node:path");
+  const runtimeDir = resolve(
+    ".packaging/native-build",
+    process.platform === "win32" ? "Release" : "",
+  );
+  test.skip(
+    !existsSync(
+      join(
+        runtimeDir,
+        `bridge-supervisor${process.platform === "win32" ? ".exe" : ""}`,
+      ),
+    ),
+    "Run npm run package:speech to build bridge-supervisor",
+  );
   const dataDir = mkdtempSync(join(tmpdir(), "models-ui-"));
   const runtime = new SpeechRuntime({
     dataDir,
-    runtimeDir: resolve(
-      ".packaging/native-build",
-      process.platform === "win32" ? "Release" : "",
-    ),
+    runtimeDir,
     speechProgram: [
       process.execPath,
       resolve("packaging/fixtures/model-speech.cjs"),
