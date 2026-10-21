@@ -25,6 +25,7 @@ let room,
   previewUrl,
   previewId,
   generation = 0;
+let characterKey;
 let organizerKey,
   organizerGeneration = 0,
   organizerPreviewUrl,
@@ -62,6 +63,9 @@ export async function refreshCharacters(roomId = room) {
     data = result;
     characterListener(data);
     renderVoiceOrganizer();
+    const nextKey = JSON.stringify([room, data]);
+    if (nextKey === characterKey) return;
+    characterKey = nextKey;
     const list = $("characters");
     list.replaceChildren();
     if (!data.characters.length) {

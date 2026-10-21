@@ -23,18 +23,31 @@ function permission(baseUrl) {
   const url = new URL(baseUrl);
   return `${url.protocol}//${url.hostname}/*`;
 }
-function inviteCode(value, baseUrl) {
-  let code = value.trim();
-  if (/^https?:\/\//.test(code)) {
-    const url = new URL(code);
-    if (url.origin !== baseUrl || url.username || url.password)
-      throw new Error("招待リンクとBridgeの接続先が異なります");
-    code = new URLSearchParams(url.hash.slice(1)).get("invite") ?? "";
+function invitation(value) {
+  try {
+    const url = new URL(value.trim());
+    const invite = new URLSearchParams(url.hash.slice(1)).get("invite") ?? "";
+    if (
+      !/^https?:$/.test(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/player/" ||
+      !/^[a-f0-9]{64}$/.test(invite)
+    )
+      throw new Error();
+    return { baseUrl: url.origin, invite };
+  } catch {
+    throw new Error("有効な招待リンクを入力してください");
   }
-  if (!/^[a-f0-9]{64}$/.test(code))
-    throw new Error("有効な招待リンクまたは招待コードを入力してください");
-  return code;
 }
+$("invitation").oninput = () => {
+  try {
+    $("invitationAddress").textContent =
+      `接続先：${invitation($("invitation").value).baseUrl}`;
+  } catch {
+    $("invitationAddress").textContent = "";
+  }
+};
 bridge.onExit = async (notice) => {
   exiting = true;
   const { participant } = await chrome.storage.session.get("participant");
@@ -70,8 +83,7 @@ $("connectionForm").onsubmit = async (event) => {
   event.preventDefault();
   $("joinChatter").disabled = true;
   try {
-    const baseUrl = address($("bridgeAddress").value.trim());
-    const invite = inviteCode($("invitation").value, baseUrl);
+    const { baseUrl, invite } = invitation($("invitation").value);
     // Call request directly from the submit gesture, before any async work.
     const allowed = await chrome.permissions.request({
       origins: [permission(baseUrl)],
@@ -91,7 +103,6 @@ $("connectionForm").onsubmit = async (event) => {
     const saved = { baseUrl, ...joined };
     bridge.token = joined.token;
     await chrome.storage.session.set({ participant: saved });
-    await chrome.storage.local.set({ bridgeUrl: baseUrl });
     $("connectionForm").hidden = true;
     await start(saved);
   } catch (error) {
@@ -103,11 +114,10 @@ $("connectionForm").onsubmit = async (event) => {
   }
 };
 try {
-  const [{ participant, notice }, { bridgeUrl }] = await Promise.all([
+  const [{ participant, notice }] = await Promise.all([
     chrome.storage.session.get(["participant", "notice"]),
-    chrome.storage.local.get("bridgeUrl"),
+    chrome.storage.local.remove("bridgeUrl"),
   ]);
-  $("bridgeAddress").value = bridgeUrl ?? "http://127.0.0.1:8090";
   $("connectionStatus").textContent =
     notice ?? "管理者から受け取った招待リンクを入力してください。";
   await chrome.storage.session.remove("notice");

@@ -1,3 +1,4 @@
+import { chatterDownload } from "../chatter/zip.mjs";
 import { credits } from "../src/runtime/credits.mjs";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -14,6 +15,7 @@ import { createExtension } from "../discord/extension.mjs";
 import { loadDependencies } from "../discord/bot.mjs";
 
 async function selfTest() {
+  chatterDownload(readAsset);
   const db = new DatabaseSync(":memory:");
   try {
     db.exec("CREATE TABLE smoke (value TEXT); INSERT INTO smoke VALUES ('ok')");

@@ -15,7 +15,7 @@
         <button id="leaveRoom" class="secondary">退出</button>
       </div>
       <details id="audioOptions">
-        <summary>音声・再生設定</summary>
+        <summary>音声・再生設定（クリックで展開）</summary>
         <p class="muted">
           Discordなどで音声を聞く場合は、このページの音声を停止してください。停止中もチャットと声設定を使えます。
         </p>
@@ -36,7 +36,9 @@
           <div id="mutes"></div>
         </details>
         <details>
-          <summary>セリフに感情・演技をつける</summary>
+          <summary>
+            セリフに感情・演技をつける（クリックで展開・スクロールで確認）
+          </summary>
           <p>
             メッセージの中に全角の丸カッコか絵文字で指示を書きます。カッコの指示は読み上げられません。
           </p>
@@ -132,6 +134,39 @@
           </p>
         </details>
       </details>
+      <details id="chatterGuide">
+        <summary>Chatterの導入について</summary>
+        <p>
+          Chromeの拡張機能で、サイドパネルからPlayerと同じ機能を使えます。D&amp;D
+          Beyond
+          MapsなどのVTTを表示したまま、隣でチャット・声設定・音声再生を使えます。
+        </p>
+        <ol>
+          <li>下のリンクからZIPをダウンロードして展開します。</li>
+          <li>
+            Chromeのアドレスバーに
+            <code>chrome://extensions</code>
+            と入力して開き、「デベロッパーモード」をオンにします。
+          </li>
+          <li>
+            「パッケージ化されていない拡張機能を読み込む」を押し、展開したフォルダ（manifest.json
+            が入っているフォルダ）を選びます。
+          </li>
+          <li>
+            VTTを開いてChatterのアイコンを押し、管理者から受け取った招待リンクを貼って参加します。
+          </li>
+        </ol>
+        <ul>
+          <li>読み込んだフォルダは、削除・移動しないでください。</li>
+          <li>
+            Bridgeが更新されたら、ZIPをダウンロードし直して読み込み直してください。
+          </li>
+          <li>PlayerとChatterの両方で音声を有効にすると、二重に聞こえます。</li>
+        </ul>
+        <a href="/downloads/chatter.zip" download
+          >Chatter拡張（ZIP）をダウンロード</a
+        >
+      </details>
       <div class="player-tabs" role="tablist" aria-label="Playerの表示">
         <button
           id="showChat"
@@ -153,9 +188,6 @@
     </header>
     <section id="chatPanel" role="tabpanel" aria-labelledby="showChat">
       <p id="chatStatus" role="status" class="muted"></p>
-      <button id="loadOlder" type="button" class="secondary" hidden>
-        以前の発言を読む
-      </button>
       <ol id="log" class="log" aria-label="チャット履歴"></ol>
       <button id="newMessages" type="button" class="secondary" hidden>
         最新へ

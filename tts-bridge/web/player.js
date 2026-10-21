@@ -161,24 +161,39 @@ const chat = mountChat({
     if (playback.replay(items)) status("この発言を自分だけもう一度再生します");
   },
 });
-onCharacters((data) => chat.characters(data));
+onCharacters((data) => {
+  chat.characters(data);
+  renderMutes(data.characters);
+});
 function renderLog() {
   chat.render();
 }
 function restoreLog(snapshot) {
   if (applyChatState(snapshot)) chat.state({ ...meta, ...snapshot }, true);
 }
-function addCharacter(n) {
-  if (!n.characterId || document.getElementById(`mute-${n.characterId}`))
-    return;
-  const label = document.createElement("label"),
-    box = document.createElement("input");
-  box.type = "checkbox";
-  box.id = `mute-${n.characterId}`;
-  box.onchange = () =>
-    box.checked ? muted.add(n.characterId) : muted.delete(n.characterId);
-  label.append(box, document.createTextNode(n.speakerName));
-  $("mutes").append(label);
+let muteKey;
+function renderMutes(characters) {
+  const nextKey = JSON.stringify(
+    characters.map(({ id, displayName }) => [id, displayName]),
+  );
+  if (nextKey === muteKey) return;
+  muteKey = nextKey;
+  const ids = new Set(characters.map((c) => c.id));
+  for (const id of muted) if (!ids.has(id)) muted.delete(id);
+  $("mutes").replaceChildren();
+  for (const character of characters) {
+    const label = document.createElement("label"),
+      box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = `mute-${character.id}`;
+    box.checked = muted.has(character.id);
+    box.onchange = () =>
+      box.checked ? muted.add(character.id) : muted.delete(character.id);
+    label.append(box, document.createTextNode(character.displayName));
+    $("mutes").append(label);
+  }
+  if (!characters.length)
+    $("mutes").textContent = "キャラを作成すると、ここでミュートできます。";
 }
 function fresh(n) {
   meta = { ...meta, ...n };
@@ -285,7 +300,6 @@ function connect() {
       refreshCharacters(n.roomId);
       return;
     }
-    addCharacter(n);
     if (n.type.startsWith("chat.message.")) chat.changed();
     if (n.type === "order.skipped") {
       unavailableAudio.add(n.orderId);

@@ -1,3 +1,4 @@
+import { readChatterArchive } from "./chatter-archive.mjs";
 import assert from "node:assert/strict";
 import {
   cpSync,
@@ -397,6 +398,19 @@ try {
     });
   });
   const extensionOrigin = `chrome-extension://${"a".repeat(32)}`;
+  const download = await fetch(`${base}/downloads/chatter.zip`);
+  assert.equal(download.status, 200);
+  assert.ok(
+    download.headers
+      .get("content-disposition")
+      .includes(`chatter-${version}.zip`),
+  );
+  const downloadedFiles = readChatterArchive(
+    Buffer.from(await download.arrayBuffer()),
+  );
+  for (const [name, content] of downloadedFiles)
+    assert.deepEqual(content, readFileSync(join(packageDir, "chatter", name)));
+  assert.equal(downloadedFiles.size, 13);
   const chatterJoin = await fetch(`${base}/api/v1/chatter/join`, {
     method: "POST",
     headers: {

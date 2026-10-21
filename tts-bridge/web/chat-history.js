@@ -108,6 +108,11 @@ export class ChatHistory {
       }
     }
   }
+  trim(limit) {
+    const ordered = [...this.messages.values()].sort((a, b) => a.seq - b.seq);
+    for (const message of ordered.slice(0, Math.max(0, ordered.length - limit)))
+      this.messages.delete(message.id);
+  }
   async older() {
     if (!this.hasMore || this.loadingOlder || !this.active || !this.enabled)
       return;

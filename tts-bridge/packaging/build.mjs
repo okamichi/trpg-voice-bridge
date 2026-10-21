@@ -1,3 +1,4 @@
+import { chatterAssets } from "../chatter/files.mjs";
 import { build } from "esbuild";
 import { inject } from "postject";
 import {
@@ -105,6 +106,8 @@ for (const file of readdirSync(join(root, "web"))) {
   if (/\.(html|js|css)$/.test(file))
     assets[`web/${file}`] = join(root, "web", file);
 }
+for (const file of chatterAssets)
+  assets[`chatter/${file}`] = join(root, "chatter", file);
 assets["discord/admin.js"] = join(root, "discord/admin.js");
 const defaults = join(work, "config.json");
 writeFileSync(defaults, JSON.stringify(initialConfig({}), null, 2));

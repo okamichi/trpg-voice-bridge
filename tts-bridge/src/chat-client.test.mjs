@@ -159,3 +159,45 @@ test("whole-message replay keeps sentence pauses and stops remaining parts on fa
   while (p.running) await tick();
   assert.deepEqual(played, ["a", "b", "c"]);
 });
+
+test("older pages merge and trim discards oldest sequence, including late revisions", async () => {
+  const calls = [];
+  const h = new ChatHistory({
+    client: {
+      room: (_, path) => path,
+      json: async (path) => {
+        calls.push(path);
+        if (path === "messages")
+          return {
+            generation: 1,
+            updateSeq: 3,
+            hasMore: true,
+            messages: [{ id: "c", seq: 3, updated: 3 }],
+          };
+        if (path === "messages?before=3")
+          return {
+            generation: 1,
+            updateSeq: 3,
+            hasMore: false,
+            messages: [
+              { id: "b", seq: 2, updated: 2 },
+              { id: "a", seq: 1, updated: 1 },
+            ],
+          };
+        return { generation: 1, nextSince: 3, changes: [] };
+      },
+    },
+  });
+  h.state(meta);
+  await settle(h);
+  await h.older();
+  await settle(h);
+  assert.ok(calls.includes("messages?before=3"));
+  assert.equal(h.hasMore, false);
+  assert.equal(h.messages.size, 3);
+  h.trim(2);
+  assert.deepEqual([...h.messages.keys()].sort(), ["b", "c"]);
+  h.merge({ id: "a", seq: 1, updated: 4 });
+  h.trim(2);
+  assert.equal(h.messages.has("a"), false);
+});

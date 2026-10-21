@@ -40,7 +40,6 @@ export async function checkPackagedChatter({
     const errors = [];
     panel.on("pageerror", (e) => errors.push(e.message));
     await panel.goto(`chrome-extension://${extensionId}/panel.html`);
-    await panel.locator("#bridgeAddress").fill(base);
     await panel.locator("#invitation").fill(invite);
     await panel.locator("#joinChatter").click();
     await expect(panel.locator("#status")).toContainText("接続しました");

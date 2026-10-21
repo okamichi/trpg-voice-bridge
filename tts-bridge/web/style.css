@@ -447,7 +447,8 @@ details.step[open] > summary::before {
   background: #293c53;
   color: var(--muted);
 }
-.player #audioOptions {
+.player #audioOptions,
+.player #chatterGuide {
   margin: 4px 0;
   max-height: 35dvh;
   overflow-y: auto;
@@ -518,7 +519,6 @@ details.step[open] > summary::before {
   flex: 1;
   overflow-y: auto;
 }
-#loadOlder,
 #newMessages {
   flex: 0 0 auto;
   align-self: center;
@@ -561,4 +561,25 @@ details.step[open] > summary::before {
   .player .composer-character select {
     padding: 6px 8px;
   }
+}
+
+textarea:read-only {
+  opacity: 0.5;
+}
+.player #audioOptions,
+.player #chatterGuide {
+  overflow-y: scroll;
+}
+.player #audioOptions::-webkit-scrollbar,
+.player #chatterGuide::-webkit-scrollbar {
+  width: 10px;
+}
+.player #audioOptions::-webkit-scrollbar-track,
+.player #chatterGuide::-webkit-scrollbar-track {
+  background: #e5e7eb;
+}
+.player #audioOptions::-webkit-scrollbar-thumb,
+.player #chatterGuide::-webkit-scrollbar-thumb {
+  background: #687586;
+  border-radius: 5px;
 }

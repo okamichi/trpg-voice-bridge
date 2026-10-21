@@ -138,14 +138,21 @@
       <summary>
         <span class="step-num"></span
         ><span class="step-title">Collectorの接続</span
-        ><small>VTTから取り込む場合のみ</small
+        ><small>VTTからチャットを取り込む場合のみ</small
         ><span class="state" id="collectorState"></span>
       </summary>
       <div class="step-body">
         <div class="part">
           <h3>Collectorの導入</h3>
           <p>
-            VTTの既存チャットを取り込む場合に導入します。Playerで直接チャットする場合は、インストール・接続ともに不要です。
+            あなたが参加者を代表としてFVTTやユドナリウム、ココフォリア
+            などのVTTからチャットメッセージを取り込む場合に導入します。			
+          </p>
+          <p>
+			チャット機能の無いVTTの場合は、参加者全員がChrome拡張機能
+			でChatterを導入し（拡張機能を導入したく無い場合はPlayerで
+			も可）、Chatterでチャットすることで音声生成・再生が可能で、
+			このCollectorはインストール・接続ともに不要です。
           </p>
           <ol>
             <li>
@@ -195,12 +202,14 @@
           <button id="copyInvite">参加URLをコピー</button>
           <button id="openPlayer">Playerを開く</button>
           <p id="invite" class="muted"></p>
-          <p>キャラの声はPlayerで全員が設定できます。</p>
+          <p>キャラの声はChatterあるいはPlayerで全員が設定できます。</p>
           <p>
-            チャット機能のないVTTでは、参加者がPlayerでキャラを作成して発言できます。CollectorやTTSの準備が終わっていなくてもチャットを使えます。
+            チャット機能のないVTTでは、参加者がChatterやPlayerでキャラ
+            の声を作成して発言でき、
+			CollectorやTTSの準備が終わっていなくてもチャットを使えます。
           </p>
           <p class="muted">
-            Chatter拡張でも、この参加URLを入力して同じ卓へ参加できます。Collectorは不要です。
+            Chatter拡張でも、この参加URLを入力して同じ卓へ参加できます。
           </p>
           <button id="renewInvite" class="secondary">参加URLを再発行</button>
         </div>

@@ -15,6 +15,8 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
     operation = 0,
     newCount = 0,
     shown = new Set();
+  const rows = new Map();
+  let selectionKey;
   const note = (text) => {
     $("chatStatus").textContent = text;
   };
@@ -50,7 +52,7 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
     $("retryMessage").disabled = !available || sending;
     $("editMessage").hidden = !prefs.pending;
     $("editMessage").disabled = sending;
-    $("messageText").disabled = sending || !!prefs.pending;
+    $("messageText").readOnly = sending || !!prefs.pending;
     $("speakingCharacter").disabled = sending || !!prefs.pending;
     $("createCharacter").disabled = !connected || stopped || sending;
     $("favoriteCharacter").disabled = !prefs.selected || sending;
@@ -59,7 +61,6 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
     )
       ? "★ お気に入り"
       : "☆ お気に入り";
-    $("loadOlder").hidden = !history.hasMore || !history.enabled || stopped;
     $("sendStatus").textContent = sending
       ? "送信中…"
       : prefs.pending
@@ -72,6 +73,17 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
     const previous = prefs.selected;
     if (charactersLoaded && !valid && !prefs.pending)
       prefs.selected = characters[0]?.id ?? "";
+    const nextKey = JSON.stringify([
+      characters.map(({ id, displayName }) => [id, displayName]),
+      prefs.selected,
+      prefs.favorites,
+      !!prefs.pending,
+    ]);
+    if (nextKey === selectionKey) {
+      controls();
+      return;
+    }
+    selectionKey = nextKey;
     const sorted = [...characters].sort(
       (a, b) =>
         Number(prefs.favorites?.includes(b.id)) -
@@ -115,15 +127,31 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
       height = log.scrollHeight;
     if (reset) {
       shown.clear();
+      rows.clear();
+      log.replaceChildren();
       newCount = 0;
     }
+    if (initial || reset || atBottom) history.trim(100);
     const messages = [...history.messages.values()].sort(
       (a, b) => a.seq - b.seq,
     );
     const additions = messages.filter((m) => !shown.has(m.id)).length;
     shown = new Set(messages.map((m) => m.id));
-    log.replaceChildren(
-      ...messages.map((m) => {
+    for (const [id, entry] of rows) {
+      if (!history.messages.has(id)) {
+        entry.row.remove();
+        rows.delete(id);
+      }
+    }
+    let position = log.firstElementChild;
+    for (const m of messages) {
+      const playable = canReplay(m);
+      let entry = rows.get(m.id);
+      if (
+        !entry ||
+        entry.updated !== m.updated ||
+        entry.playable !== playable
+      ) {
         const row = document.createElement("li");
         row.className = "list-item";
         row.dataset.messageId = m.id;
@@ -153,12 +181,19 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
         button.type = "button";
         button.className = "secondary";
         button.textContent = "もう一度再生";
-        button.disabled = !canReplay(m);
+        button.disabled = !playable;
         button.onclick = () => replay(m);
         row.append(heading, text, state, " ", button);
-        return row;
-      }),
-    );
+        if (entry) {
+          if (position === entry.row) position = row;
+          entry.row.replaceWith(row);
+        }
+        entry = { row, updated: m.updated, playable };
+        rows.set(m.id, entry);
+      }
+      if (entry.row !== position) log.insertBefore(entry.row, position);
+      position = entry.row.nextElementSibling;
+    }
     if (older) log.scrollTop = top + log.scrollHeight - height;
     else if (initial || reset || atBottom) {
       log.scrollTop = log.scrollHeight;
@@ -351,7 +386,6 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
       $("saveNewCharacter").disabled = false;
     }
   };
-  $("loadOlder").onclick = () => history.older();
   $("newMessages").onclick = () => {
     $("log").scrollTop = $("log").scrollHeight;
     newCount = 0;

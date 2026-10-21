@@ -94,6 +94,7 @@ test("Collector-free chat, character selection, IME, draft, favorites and narrow
     await input.type("二行目");
     await input.press("Enter");
     await expect(other.locator("#log li")).toHaveCount(1);
+    await expect(input).toBeFocused();
     await expect(other.locator("#log")).toContainText("二行目");
     await expect(other.locator("#log")).toContainText("読み上げ停止中");
     await expect(page.locator("#enable")).toHaveText("音声を有効にする");
@@ -213,8 +214,7 @@ test("sharing changes, pagination, scroll position and leaving", async ({
   }
   await page.reload();
   await expect(page.locator("#log li")).toHaveCount(100);
-  await page.locator("#loadOlder").click();
-  await expect(page.locator("#log li")).toHaveCount(110);
+  await expect(page.locator("#loadOlder")).toHaveCount(0);
   await page.locator("#log").evaluate((el) => {
     el.scrollTop = 0;
   });
@@ -229,9 +229,22 @@ test("sharing changes, pagination, scroll position and leaving", async ({
     participant,
   );
   await expect(page.locator("#newMessages")).toBeVisible();
+  await expect(page.locator("#log li")).toHaveCount(101);
   expect(await page.locator("#log").evaluate((el) => el.scrollTop)).toBe(0);
   await page.locator("#newMessages").click();
   await expect(page.locator("#newMessages")).not.toBeVisible();
+  app.engine.rate.tokens = 30;
+  app.engine.participantMessage(
+    {
+      characterId: app.store.config.characters[0].id,
+      sessionId: app.engine.sessionId,
+      clientMessageId: "bottom-message",
+      text: "一番下で受信",
+    },
+    participant,
+  );
+  await expect(page.locator("#log")).toContainText("一番下で受信");
+  await expect(page.locator("#log li")).toHaveCount(100);
   app.store.change((c) => {
     c.publishTextToPlayers = false;
     app.store.chat.advanceGenerationInside();
@@ -302,4 +315,116 @@ test("reconnect catches up missed chat and clears an offline-deleted history", a
   await expect(page.locator("#log")).toContainText("切断中の新しい発言");
   await expect(page.locator("#log")).not.toContainText("切断前の発言");
   await expect(page.locator("#enable")).toHaveText("音声を有効にする");
+});
+
+test("stable character and log nodes, live voice states, and mutes track character lifecycle", async ({
+  page,
+}) => {
+  await page.goto(invite);
+  await create(page);
+  const id = app.store.config.characters[0].id;
+  await expect(page.locator(`#mute-${id}`)).toHaveCount(1);
+  await expect(page.locator("#audioOptions > summary")).toHaveText(
+    "音声・再生設定（クリックで展開）",
+  );
+  await expect(page.locator("#chatterGuide a")).toHaveAttribute(
+    "href",
+    "/downloads/chatter.zip",
+  );
+  await page.evaluate(async () => {
+    window.firstOption = document.querySelector(
+      "#speakingCharacter option:last-child",
+    );
+    window.firstCharacter = document.querySelector(
+      "#characters > :first-child",
+    );
+    await (await import("/web/characters.js")).refreshCharacters();
+  });
+  expect(
+    await page.evaluate(
+      () =>
+        window.firstOption ===
+          document.querySelector("#speakingCharacter option:last-child") &&
+        window.firstCharacter ===
+          document.querySelector("#characters > :first-child"),
+    ),
+  ).toBe(true);
+  let voiceStatus = "generating";
+  await page.route("**/characters", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const data = await response.json();
+    data.voiceStates = {
+      [id]: {
+        status: voiceStatus,
+        reason: voiceStatus === "failed" ? "テスト登録失敗" : "",
+      },
+    };
+    await route.fulfill({ response, json: data });
+  });
+  await page.evaluate(async () =>
+    (await import("/web/characters.js")).refreshCharacters(),
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        window.firstOption ===
+        document.querySelector("#speakingCharacter option:last-child"),
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(
+      () =>
+        window.firstCharacter ===
+        document.querySelector("#characters > :first-child"),
+    ),
+  ).toBe(false);
+  await expect(page.locator("#characters")).toContainText("生成中");
+  voiceStatus = "failed";
+  await page.evaluate(async () =>
+    (await import("/web/characters.js")).refreshCharacters(),
+  );
+  await expect(page.locator("#characters")).toContainText(
+    "登録失敗 — テスト登録失敗",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        window.firstOption ===
+        document.querySelector("#speakingCharacter option:last-child"),
+    ),
+  ).toBe(true);
+  await page.unroute("**/characters");
+  await send(page, "一つ目");
+  await expect(page.locator("#log li")).toContainText("読み上げなし");
+  await page.evaluate(() => {
+    window.firstRow = document.querySelector("#log li");
+  });
+  await send(page, "二つ目");
+  await expect(page.locator("#log li")).toHaveCount(2);
+  expect(
+    await page.evaluate(
+      () => window.firstRow === document.querySelector("#log li"),
+    ),
+  ).toBe(true);
+  await page.locator(`#mute-${id}`).evaluate((el) => {
+    el.checked = true;
+    el.dispatchEvent(new Event("change"));
+  });
+  app.store.change((config) => {
+    config.characters[0].displayName = "変更した名前";
+  });
+  await page.evaluate(async () =>
+    (await import("/web/characters.js")).refreshCharacters(),
+  );
+  await expect(page.locator("#mutes")).toContainText("変更した名前");
+  await expect(page.locator(`#mute-${id}`)).toBeChecked();
+  app.store.change((config) => {
+    config.characters = [];
+  });
+  await page.evaluate(async () =>
+    (await import("/web/characters.js")).refreshCharacters(),
+  );
+  await expect(page.locator("#mutes input")).toHaveCount(0);
+  await expect(page.locator("#mutes")).toContainText("キャラを作成すると");
 });

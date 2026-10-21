@@ -1,11 +1,10 @@
 import { test, expect, chromium } from "@playwright/test";
-import { mkdtempSync, cpSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { createApp } from "../src/http.mjs";
 import { initialConfig } from "../src/store.mjs";
-import { buildChatter } from "../chatter/build.mjs";
-await buildChatter();
+import { readChatterArchive } from "../packaging/chatter-archive.mjs";
 
 // Chrome exposes the real side panel as a target that Playwright does not
 // attach to as a Page. Use the public CDP target API for that surface.
@@ -89,9 +88,14 @@ test("Chatter extension joins without Collector, shares chat with Player and res
     // Headless Chrome cannot click native optional-permission prompts. Grant
     // only the chosen test host in a temporary copy; production grants none.
     const extension = mkdtempSync(join(tmpdir(), "chatter-extension-"));
-    cpSync(new URL("../chatter", import.meta.url), extension, {
-      recursive: true,
-    });
+    const download = await fetch(base + "/downloads/chatter.zip");
+    expect(download.ok).toBe(true);
+    for (const [name, content] of readChatterArchive(
+      Buffer.from(await download.arrayBuffer()),
+    )) {
+      mkdirSync(dirname(join(extension, name)), { recursive: true });
+      writeFileSync(join(extension, name), content);
+    }
     const manifest = JSON.parse(readFileSync(join(extension, "manifest.json")));
     expect(manifest.host_permissions).toBeUndefined();
     expect(manifest.content_scripts).toBeUndefined();
@@ -117,8 +121,23 @@ test("Chatter extension joins without Collector, shares chat with Player and res
     await panel.setViewportSize({ width: 360, height: 800 });
     await expect(panel.locator("#connection")).toBeVisible();
     await expect(panel.locator("#participant")).not.toBeVisible();
-    await panel.locator("#bridgeAddress").fill(base);
+    await expect(panel.locator("#chatterGuide")).toHaveCount(0);
+    for (const invalid of [
+      "a".repeat(64),
+      base + "/admin/#invite=" + "a".repeat(64),
+      base + "/player/",
+      "http://user:password@127.0.0.1/player/#invite=" + "a".repeat(64),
+    ]) {
+      await panel.locator("#invitation").fill(invalid);
+      await panel.locator("#joinChatter").click();
+      await expect(panel.locator("#connectionStatus")).toContainText(
+        "有効な招待リンク",
+      );
+    }
     await panel.locator("#invitation").fill(invite);
+    await expect(panel.locator("#invitationAddress")).toHaveText(
+      `接続先：${base}`,
+    );
     await panel.evaluate(() => {
       const realRequest = chrome.permissions.request.bind(chrome.permissions);
       chrome.permissions.request = async (request) => {
@@ -144,9 +163,8 @@ test("Chatter extension joins without Collector, shares chat with Player and res
       async () => (await chrome.storage.session.get("participant")).participant,
     );
     expect(saved.token).toMatch(/^[a-f0-9]{64}$/);
-    expect(await panel.evaluate(() => chrome.storage.local.get())).toEqual({
-      bridgeUrl: base,
-    });
+    expect(await panel.evaluate(() => chrome.storage.local.get())).toEqual({});
+    await expect(panel.locator("#connectionAddress")).toHaveText(base);
     expect(panel.url()).not.toContain(saved.token);
     const options = await worker.evaluate(() =>
       chrome.sidePanel.getOptions({}),
@@ -327,13 +345,11 @@ test("Chatter extension joins without Collector, shares chat with Player and res
         }),
       })
     ).json();
-    // An invitation for a different origin cannot silently switch destinations.
+    // A new invitation supplies the new exact origin, including its port.
     await panel.locator("#invitation").fill(secondInvite.url);
-    await panel.locator("#joinChatter").click();
-    await expect(panel.locator("#connectionStatus")).toContainText(
-      "接続先が異なります",
+    await expect(panel.locator("#invitationAddress")).toHaveText(
+      `接続先：${secondBase}`,
     );
-    await panel.locator("#bridgeAddress").fill(secondBase);
     await panel.locator("#joinChatter").click();
     await expect(panel.locator("#status")).toContainText("接続しました");
     await expect(panel.locator("#connectionAddress")).toHaveText(secondBase);
@@ -344,7 +360,8 @@ test("Chatter extension joins without Collector, shares chat with Player and res
     panel = await context.newPage();
     await panel.goto(`chrome-extension://${id}/panel.html`);
     await expect(panel.locator("#connection")).toBeVisible();
-    await expect(panel.locator("#bridgeAddress")).toHaveValue(secondBase);
+    await expect(panel.locator("#bridgeAddress")).toHaveCount(0);
+    await expect(panel.locator("#invitation")).toHaveValue("");
     expect(
       await panel.evaluate(() => chrome.storage.session.get("participant")),
     ).toEqual({});

@@ -1,6 +1,8 @@
-import { mkdir, readFile, writeFile, copyFile } from "node:fs/promises";
+import { chatterFiles } from "./files.mjs";
+import { readAsset } from "../src/runtime/assets.mjs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkProjectVersion } from "../packaging/version.mjs";
 const source = fileURLToPath(new URL("./", import.meta.url));
@@ -9,56 +11,11 @@ const source = fileURLToPath(new URL("./", import.meta.url));
 export async function buildChatter(destination = source) {
   checkProjectVersion();
   destination = resolve(destination);
-  await mkdir(destination, { recursive: true });
-  if (destination !== resolve(source)) {
-    for (const name of [
-      "manifest.json",
-      "background.js",
-      "panel.js",
-      "README.md",
-    ])
-      await copyFile(join(source, name), join(destination, name));
+  for (const [name, content] of chatterFiles(readAsset)) {
+    const path = join(destination, name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, content);
   }
-  const output = join(destination, "shared");
-  await mkdir(output, { recursive: true });
-  for (const name of [
-    "style.css",
-    "player.js",
-    "characters.js",
-    "playback.js",
-    "uuid.js",
-    "bridge-client.js",
-    "chat-history.js",
-    "chat-view.js",
-  ]) {
-    await writeFile(
-      join(output, name),
-      await readFile(new URL(`../web/${name}`, import.meta.url)),
-    );
-  }
-  const html = (
-    await readFile(new URL("../web/player.html", import.meta.url), "utf8")
-  )
-    .replace('href="/web/style.css"', 'href="shared/style.css"')
-    .replace(
-      '<main class="player">',
-      `${await readFile(new URL("./connect.html", import.meta.url), "utf8")}\n<main class="player" id="participant" hidden>`,
-    )
-    .replace("<h1>卓のチャット</h1>", "<h1>Chatter</h1>")
-    .replace(
-      "<summary>音声・再生設定</summary>",
-      '<summary>音声・再生設定</summary><p id="connectionAddress" class="muted"></p>',
-    )
-    .replace('src="/web/player.js"', 'src="panel.js"')
-    .replace(
-      'class="secondary">退出</button>',
-      'class="secondary">退出・接続先を変更</button>',
-    )
-    .replace(
-      "Discordなどで音声を聞く場合は、",
-      "Web Playerと両方で音声を有効にすると二重に再生されます。Discordなどで音声を聞く場合は、",
-    );
-  await writeFile(join(destination, "panel.html"), html);
   return destination;
 }
 if (

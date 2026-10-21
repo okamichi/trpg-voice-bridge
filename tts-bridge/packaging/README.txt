@@ -77,7 +77,7 @@ Chatterの導入:
 1. Chromeで chrome://extensions を開き、デベロッパーモードを有効にします。
 2. 「パッケージ化されていない拡張機能を読み込む」で同梱の chatter/ を選びます。
    必要なコードはビルド済みです。Node.jsやnpmは不要です。
-3. VTTを開いてChatterのアイコンを押し、BridgeのURLと招待リンクを入力します。
+3. VTTを開いてChatterのアイコンを押し、管理者から受け取った招待リンクを貼って参加します。
    選んだ接続先へのアクセスを許可します。別PCからは共有された公開URLを使います。
 4. 「＋キャラ作成」でキャラを作り、発言キャラを選んで送信します。
    声は「キャラ・声設定」で設定できます。音声を聞く画面だけ「音声を有効にする」を押します。
@@ -166,3 +166,5 @@ macOSで開発元を確認できない旨の警告が出た場合:
   Bridgeだけでなく、runtime/speech内のspeechやbridge-supervisor、ネイティブ依存にも
   確認が必要な場合があります。
   Appleの案内: https://support.apple.com/ja-jp/102445
+
+参加者はPlayerの「Chatterの導入について」からChatterのZIPと導入手順を入手できます。

@@ -101,3 +101,48 @@ test("version check detects Chatter drift and version command synchronizes both 
   ])
     assert.equal(JSON.parse(readFileSync(join(root, name))).version, "1.2.3");
 });
+
+test("download ZIP matches disk build and is reproducible by content, with structural build guards", async (t) => {
+  const { chatterFiles } = await import("../chatter/files.mjs");
+  const { chatterDownload, zipFiles } = await import("../chatter/zip.mjs");
+  const { readAsset } = await import("../src/runtime/assets.mjs");
+  const { readChatterArchive } = await import("./chatter-archive.mjs");
+  const files = chatterFiles(readAsset),
+    download = chatterDownload(readAsset);
+  assert.deepEqual(download.content, zipFiles(new Map([...files].reverse())));
+  const different = new Map(files);
+  different.set("README.md", Buffer.from("changed"));
+  assert.notDeepEqual(download.content, zipFiles(different));
+  assert.equal(
+    download.filename,
+    `trpg-voice-bridge-chatter-${JSON.parse(readAsset("package.json")).version}.zip`,
+  );
+  const folder = mkdtempSync(join(tmpdir(), "chatter-zip-"));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  await buildChatter(folder);
+  const extracted = readChatterArchive(download.content);
+  assert.deepEqual([...extracted.keys()].sort(), [...files.keys()].sort());
+  for (const [name, bytes] of extracted)
+    assert.deepEqual(bytes, readFileSync(join(folder, name)));
+  assert.match(
+    extracted.get("panel.html").toString(),
+    /id="connectionAddress"/,
+  );
+  assert.doesNotMatch(
+    extracted.get("panel.html").toString(),
+    /id="chatterGuide"/,
+  );
+  for (const target of [
+    "音声・再生設定（クリックで展開）",
+    'id="chatterGuide"',
+  ])
+    assert.throws(
+      () =>
+        chatterFiles((name) =>
+          name === "web/player.html"
+            ? Buffer.from(readAsset(name).toString().replace(target, "missing"))
+            : readAsset(name),
+        ),
+      /見出しまたは導入説明/,
+    );
+});

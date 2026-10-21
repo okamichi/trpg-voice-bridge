@@ -297,3 +297,63 @@ test("Mock Engine split speech plays in order, honors pauses, and continues afte
   post("two", "新しいセッションです。");
   await until(() => fake.resources.length === 3);
 });
+
+for (const mode of [
+  "complete",
+  "empty",
+  "cancel-delay",
+  "cancel-play",
+  "timeout",
+]) {
+  test(`farewell delay lifecycle: ${mode}`, async (t) => {
+    const leaveDelay = 40;
+    const active = new Set();
+    let scheduled = 0,
+      finishedAt;
+    const realSet = globalThis.setTimeout,
+      realClear = globalThis.clearTimeout;
+    t.mock.method(globalThis, "setTimeout", (fn, ms, ...args) => {
+      let timer;
+      timer = realSet(() => {
+        active.delete(timer);
+        fn(...args);
+      }, ms);
+      if (ms === leaveDelay) {
+        scheduled++;
+        active.add(timer);
+      }
+      return timer;
+    });
+    t.mock.method(globalThis, "clearTimeout", (timer) => {
+      active.delete(timer);
+      return realClear(timer);
+    });
+    const f = await setup(t, {
+      autoIdle: mode !== "cancel-play",
+      greeting: (kind) =>
+        kind === "leave" ? Buffer.alloc(mode === "empty" ? 0 : 100) : null,
+      timeouts: { greeting: mode === "timeout" ? 15 : 1000, leaveDelay },
+    });
+    await f.bot.connect(A, A);
+    f.players[0].once("idle", () => {
+      finishedAt = performance.now();
+    });
+    const leaving = f.bot.disconnect();
+    if (mode === "cancel-delay" || mode === "cancel-play") {
+      await until(() =>
+        mode === "cancel-delay" ? scheduled === 1 : f.resources.length === 1,
+      );
+      f.engine.emit("notification", {
+        ...f.engine.metadata(),
+        type: "playback.reset",
+        baseline: 0,
+      });
+    }
+    await leaving;
+    assert.ok(f.calls.includes("destroy"));
+    assert.equal(active.size, 0);
+    assert.equal(scheduled, ["empty", "cancel-play"].includes(mode) ? 0 : 1);
+    if (mode === "complete")
+      assert.ok(performance.now() - finishedAt >= leaveDelay - 1);
+  });
+}

@@ -1,3 +1,4 @@
+import { chatterDownload } from "../chatter/zip.mjs";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -62,9 +63,16 @@ export function createApp({
   initial,
   loadDefaults,
   extensions = [],
+  chatterAssetReader = readAsset,
 } = {}) {
   const store = new Store(dataDir, initial ?? initialConfig(profiles)),
     engine = new Engine(store, providerOptions);
+  let download;
+  try {
+    download = chatterDownload(chatterAssetReader);
+  } catch {
+    console.error("Chatterのダウンロード用ZIPを作成できませんでした");
+  }
   const installedExtensions = new Map();
   for (const factory of extensions) {
     try {
@@ -304,6 +312,15 @@ export function createApp({
             ? readAsset(extension.adminAsset)
             : readFileSync(extension.adminScript),
         );
+      }
+      if (method === "GET" && path === "/downloads/chatter.zip") {
+        check(download, "ChatterのZIPを作成できませんでした", 503);
+        res.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${download.filename}"`,
+          "Content-Length": download.content.length,
+        });
+        return res.end(download.content);
       }
       const staticFiles = {
         "/player/": ["player.html", "text/html"],
