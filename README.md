@@ -20,6 +20,7 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 ### 詳細情報
 
 - [構成・Collector・声の登録（セットアップガイド）](docs/setup-guide.md)
+- [各種コンポーネント説明](docs/component.md)
 - [Bridgeの設定と動きの詳細](tts-bridge/README.md)
 - [音声をDiscordで流す場合](docs/discord.md)
 - [別のPCの参加者にPlayerを公開する場合](docs/online.md)
@@ -29,6 +30,9 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
 ### クイックスタートガイド（最新版では管理画面からTTSサーバの起動やモデルのダウンロードが可能）
+
+- 最新版では管理画面からTTSサーバ(speech.cpp)の起動やモデルのダウンロードができるので、動画の説明内のTTSサーバを起動する必要は無くなりました。
+- quickstart.md は廃止されています。代わりに、「起動方法とビルド方法」のドキュメントを参照してください。
 
 https://github.com/user-attachments/assets/52d2cf97-fa36-4d7d-aa11-4cf8b30f2761
 
