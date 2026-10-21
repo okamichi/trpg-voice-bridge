@@ -31,10 +31,7 @@ https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
 ### クイックスタートガイド
 
-- 最新版では管理画面からTTSサーバ(speech.cpp)の起動やモデルのダウンロードができるので、動画の説明内のTTSサーバを起動する必要は無くなりました。
-- quickstart.md は廃止されています。代わりに、「起動方法とビルド方法」のドキュメントを参照してください。
-
-https://github.com/user-attachments/assets/52d2cf97-fa36-4d7d-aa11-4cf8b30f2761
+https://github.com/user-attachments/assets/203a1004-4932-47b9-8517-37cf0cb7ecb7
 
 ## Irodori-TTS-Server について
 
