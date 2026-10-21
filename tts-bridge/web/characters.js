@@ -1,4 +1,22 @@
 import { randomUUID } from "./uuid.js";
+import { bridge } from "./bridge-client.js";
+let characterListener = () => {},
+  requestVersion = 0,
+  active = true;
+export function onCharacters(listener) {
+  characterListener = listener;
+}
+export function stopCharacterSettings() {
+  active = false;
+  requestVersion++;
+  room = undefined;
+  dialog.close();
+  generation++;
+  organizerGeneration++;
+  $("organizedVoiceAudio").pause();
+  $("organizedVoiceAudio").removeAttribute("src");
+  $("characters").replaceChildren();
+}
 const $ = (id) => document.getElementById(id);
 let room,
   data,
@@ -7,6 +25,7 @@ let room,
   previewUrl,
   previewId,
   generation = 0;
+let characterKey;
 let organizerKey,
   organizerGeneration = 0,
   organizerPreviewUrl,
@@ -26,28 +45,32 @@ const fields = [
   "cfgScaleSpeaker",
 ];
 async function request(path, method = "GET", body) {
-  const r = await fetch(`/api/v1/rooms/${room}/${path}`, {
+  if (!active) throw new Error("退出しています");
+  return bridge.request(bridge.room(room, path), {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      "Idempotency-Key": randomUUID(),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    body,
+    key: randomUUID(),
+    timeout: path === "previews" ? 330000 : 15000,
   });
-  if (!r.ok) throw new Error((await r.json()).error);
-  return r;
 }
 export async function refreshCharacters(roomId = room) {
-  if (!roomId) return;
+  if (!roomId || !active) return;
   room = roomId;
+  const version = ++requestVersion;
   try {
-    data = await (await request("characters")).json();
+    const result = await (await request("characters")).json();
+    if (!active || version !== requestVersion) return;
+    data = result;
+    characterListener(data);
     renderVoiceOrganizer();
+    const nextKey = JSON.stringify([room, data]);
+    if (nextKey === characterKey) return;
+    characterKey = nextKey;
     const list = $("characters");
     list.replaceChildren();
     if (!data.characters.length) {
       list.textContent =
-        "VTTでキャラとして公開発言すると、ここに表示されます。読み上げ停止中でも設定できます。";
+        "チャットの「＋キャラ作成」で登録できます。VTTから取り込んだキャラもここに表示されます。";
       return;
     }
     const chars = [...data.characters].sort(

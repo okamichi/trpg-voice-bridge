@@ -91,7 +91,7 @@ async function refresh() {
   const collectorConnected = d.collectors.some((c) => c.online);
   if (!stepsInitialized) {
     $("stepTts").open = !ttsConnected;
-    $("stepCollector").open = !!pending.length || !collectorConnected;
+    $("stepCollector").open = !!pending.length;
     $("stepSession").open = true;
     $("stepEnd").open = true;
     stepsInitialized = true;
@@ -106,8 +106,12 @@ async function refresh() {
   );
   setState(
     $("collectorState"),
-    pending.length ? "承認待ち" : collectorConnected ? "接続中" : "未接続",
-    !pending.length && collectorConnected ? "ok" : "warn",
+    pending.length
+      ? "承認待ち"
+      : collectorConnected
+        ? "接続中"
+        : "任意・未接続",
+    pending.length ? "warn" : collectorConnected ? "ok" : "",
   );
   setState(
     $("sessionState"),
@@ -276,11 +280,22 @@ $("publishText").onchange = () =>
         })
       ).publishTextToPlayers;
       $("notice").textContent = publishText
-        ? "Playerにセリフの本文を表示します。"
-        : "Playerにはセリフの本文を表示しません。";
+        ? "チャットと本文を共有します。"
+        : "チャットと本文の共有を停止しました。保存済み履歴は保持されます。";
     } finally {
       $("publishText").checked = publishText;
     }
+  });
+$("clearChatHistory").onclick = () =>
+  run(async () => {
+    if (
+      !confirm(
+        "卓全体のチャット履歴を消去します。参加者の表示にも反映されます。音声は停止・削除されません。続行しますか？",
+      )
+    )
+      return;
+    await api("chat-history", "DELETE");
+    $("notice").textContent = "卓のチャット履歴を消去しました。";
   });
 $("chatVoiceRegistration").onchange = () =>
   run(async () => {

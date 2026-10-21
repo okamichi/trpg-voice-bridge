@@ -1,0 +1,20 @@
+<section id="connection" class="wrap">
+  <p class="eyebrow">TRPG VOICE BRIDGE</p>
+  <h1>Chatterに参加</h1>
+  <p>VTTを開いたままキャラとして会話できます。Collectorは不要です。</p>
+  <form id="connectionForm">
+    <label
+      >招待リンク<input
+        id="invitation"
+        type="password"
+        required
+        autocomplete="off"
+    /></label>
+    <p id="invitationAddress" class="muted"></p>
+    <p class="muted">
+      参加すると、この接続先へのアクセス許可を求めます。招待は保存しません。ブラウザを終了したら、招待で再参加してください。
+    </p>
+    <button id="joinChatter" type="submit">参加</button>
+  </form>
+  <p id="connectionStatus" role="status"></p>
+</section>

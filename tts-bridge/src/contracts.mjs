@@ -28,6 +28,22 @@ export const hash = (x) =>
   createHash("sha256")
     .update(typeof x === "string" ? x : canonical(x))
     .digest("hex");
+export function participantMessageSchema(input) {
+  check(
+    id(input?.characterId) &&
+      id(input?.clientMessageId) &&
+      id(input?.sessionId),
+    "発言識別子が不正です",
+  );
+  check(
+    typeof input.text === "string" &&
+      input.text.trim() &&
+      [...input.text].length <= 500 &&
+      !/[<>\u0000]/.test(input.text),
+    "本文は500文字以内のプレーンテキストが必要です",
+  );
+  return input;
+}
 export function eventSchema(e) {
   check(
     e?.schemaVersion === 1 && id(e.eventId) && id(e.roomId) && id(e.sessionId),

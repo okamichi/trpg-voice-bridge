@@ -2,6 +2,27 @@ import { NEW_VOICE_DEFAULTS } from "./voice-defaults.mjs";
 import { randomUUID } from "node:crypto";
 import { check, voiceSchema } from "./contracts.mjs";
 
+export function createCharacter(store, input) {
+  let character;
+  store.change((c) => {
+    check(
+      typeof input?.displayName === "string" &&
+        input.displayName.trim().length > 0 &&
+        input.displayName.length <= 200,
+      "キャラ名は1～200文字です",
+    );
+    character = {
+      id: randomUUID(),
+      displayName: input.displayName.trim(),
+      enabled: true,
+      voiceProfileId: null,
+      bindings: [],
+    };
+    c.characters.push(character);
+  });
+  return character;
+}
+
 export function characterSettings(store) {
   return {
     characters: store.config.characters,

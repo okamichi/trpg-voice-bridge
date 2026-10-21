@@ -1,4 +1,5 @@
 import { VoiceCommandStore } from "./voice-command-store.mjs";
+import { ChatStore } from "./chat-store.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
@@ -45,6 +46,7 @@ export class Store {
       "UPDATE events SET status='cancelled' WHERE status IN ('queued','synthesizing','ready')",
     );
     this.voiceCommands = new VoiceCommandStore(this);
+    this.chat = new ChatStore(this);
     this.prune();
   }
   auth(key) {

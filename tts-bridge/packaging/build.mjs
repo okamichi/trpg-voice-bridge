@@ -1,3 +1,4 @@
+import { chatterAssets } from "../chatter/files.mjs";
 import { build } from "esbuild";
 import { inject } from "postject";
 import {
@@ -19,6 +20,7 @@ import { initialConfig } from "../src/store.mjs";
 import { assertPackagePrivacy, snapshotUpstreamBinaries } from "./privacy.mjs";
 import { supplementLicenses } from "./licenses.mjs";
 import { checkProjectVersion } from "./version.mjs";
+import { buildChatter } from "../chatter/build.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const required = readFileSync(
@@ -104,6 +106,8 @@ for (const file of readdirSync(join(root, "web"))) {
   if (/\.(html|js|css)$/.test(file))
     assets[`web/${file}`] = join(root, "web", file);
 }
+for (const file of chatterAssets)
+  assets[`chatter/${file}`] = join(root, "chatter", file);
 assets["discord/admin.js"] = join(root, "discord/admin.js");
 const defaults = join(work, "config.json");
 writeFileSync(defaults, JSON.stringify(initialConfig({}), null, 2));
@@ -156,6 +160,7 @@ if (process.platform === "darwin") {
   execFileSync("codesign", ["--verify", "--strict", exe]);
 }
 cpSync(join(root, "collector"), join(stage, "collector"), { recursive: true });
+await buildChatter(join(stage, "chatter"));
 cpSync(join(root, "../LICENSE"), join(stage, "LICENSE"));
 cpSync(join(root, "packaging/README.txt"), join(stage, "README.txt"));
 cpSync(join(work, "build-info.json"), join(stage, "build-info.json"));

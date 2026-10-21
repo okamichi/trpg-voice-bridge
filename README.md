@@ -6,6 +6,8 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 
 キャラの声はPlayerで全員が設定できます。Collectorの初回の承認と、読み上げの開始・停止は管理画面で行います。
 
+チャット機能のないVTTでも、招待URLからPlayerを開き、キャラを作成・選択して直接発言できます。この使い方ではCollectorは不要です。チャット本文は保存され、TTSの準備前や読み上げ停止中でも会話できます。サイドパネル用の[Chatter拡張](tts-bridge/chatter/README.md)も利用できます。
+
 システムメッセージやダイスだけの発言は読み上げません。ダイス付きのセリフはコマンドを除いた本文だけを読み上げ、結果は読みません。VTTごとの取得の条件は[セットアップガイド](docs/setup-guide.md#collectorとは)を見てください。
 
 ### 起動方法とビルド方法
@@ -18,6 +20,7 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 ### 詳細情報
 
 - [構成・Collector・声の登録（セットアップガイド）](docs/setup-guide.md)
+- [各種コンポーネント説明](docs/component.md)
 - [Bridgeの設定と動きの詳細](tts-bridge/README.md)
 - [音声をDiscordで流す場合](docs/discord.md)
 - [別のPCの参加者にPlayerを公開する場合](docs/online.md)
@@ -30,6 +33,9 @@ https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
 - 最新版では管理画面からTTSサーバ(speech.cpp)の起動やモデルのダウンロードができるので、TTSサーバを起動する必要は無くなりました。
 - quickstart.md の代わりに、前述の「起動方法とビルド方法」のドキュメントを参照してください。
+
+- 最新版では管理画面からTTSサーバ(speech.cpp)の起動やモデルのダウンロードができるので、動画の説明内のTTSサーバを起動する必要は無くなりました。
+- quickstart.md は廃止されています。代わりに、「起動方法とビルド方法」のドキュメントを参照してください。
 
 https://github.com/user-attachments/assets/52d2cf97-fa36-4d7d-aa11-4cf8b30f2761
 

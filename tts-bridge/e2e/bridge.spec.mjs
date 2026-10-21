@@ -120,7 +120,7 @@ test("3 independent players hear 10 ordered messages once; reload ignores old wo
     .toEqual([id]);
   for (const c of contexts) await c.close();
 });
-test("a message of several sentences plays sentence by sentence, logged one per line", async ({
+test("a message of several sentences plays sentence by sentence in one chat row", async ({
   page,
 }) => {
   // This case explicitly exercises splitting rather than the 150-character default.
@@ -139,9 +139,9 @@ test("a message of several sentences plays sentence by sentence, logged one per 
     .map((o) => o.orderId);
   await expect.poll(() => page.evaluate(() => window.started)).toEqual(ids);
   const rows = page.locator("#log li");
-  await expect(rows).toHaveCount(3);
-  await expect(rows.nth(0)).toContainText("行こう？");
-  await expect(rows.nth(2)).toContainText("みんな、聞いて。");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("行こう？");
+  await expect(rows.first()).toContainText("みんな、聞いて。");
   expect(await page.evaluate(() => window.maxSounds)).toBe(1);
 });
 test("Player log shows spoken text and replays only on the page that asked", async ({
@@ -165,9 +165,9 @@ test("Player log shows spoken text and replays only on the page that asked", asy
   const rows = pages[0].locator("#log li");
   await expect(rows).toHaveCount(3);
   await expect(rows.first()).toContainText("メリッサ");
-  await expect(rows.first()).toContainText("その2です。");
-  await expect(rows.last()).toContainText("その0です。");
-  await rows.last().getByRole("button", { name: "もう一度再生" }).click();
+  await expect(rows.last()).toContainText("その2です。");
+  await expect(rows.first()).toContainText("その0です。");
+  await rows.first().getByRole("button", { name: "もう一度再生" }).click();
   await expect
     .poll(() => pages[0].evaluate(() => window.started))
     .toEqual([...ids, ids[0]]);
@@ -176,17 +176,18 @@ test("Player log shows spoken text and replays only on the page that asked", asy
   await pages[0].reload();
   await expect(pages[0].locator("#status")).toContainText("接続しました");
   await expect(rows).toHaveCount(3);
-  await expect(rows.first()).toContainText("その2です。");
+  await expect(rows.last()).toContainText("その2です。");
   await pages[0].waitForTimeout(200);
   expect(await pages[0].evaluate(() => window.started)).toEqual([]);
   await admin("subtitles", "PUT", {
     before: true,
     publishTextToPlayers: false,
   });
+  await expect(rows).toHaveCount(0);
+  await expect(pages[1].locator("#log li")).toHaveCount(0);
   post(3);
-  await expect(rows).toHaveCount(4);
-  await expect(rows.first()).toContainText("メリッサ");
-  await expect(rows.first()).not.toContainText("その3です。");
+  await expect(rows).toHaveCount(0);
+  await expect(pages[0].locator("#sendMessage")).toBeDisabled();
   for (const c of contexts) await c.close();
 });
 test("Player discovery, shared editing, private preview and conflicts across participants", async ({
@@ -207,6 +208,7 @@ test("Player discovery, shared editing, private preview and conflicts across par
     expect(post("discovery").status).toBe("ignored");
     for (const p of pages)
       await expect(p.locator("#characters")).toContainText("声が未設定");
+    await pages[0].getByRole("tab", { name: "キャラ・声設定" }).click();
     await pages[0].getByRole("button", { name: "声を選ぶ" }).click();
     await pages[0].locator("[name=voice]").selectOption("new");
     await pages[0].locator("[name=name]").fill("騎士の声");
@@ -221,8 +223,10 @@ test("Player discovery, shared editing, private preview and conflicts across par
     await pages[0].getByRole("button", { name: "保存", exact: true }).click();
     for (const p of pages)
       await expect(p.locator("#characters")).toContainText("騎士の声");
-    for (const p of pages)
+    for (const p of pages) {
+      await p.getByRole("tab", { name: "キャラ・声設定" }).click();
       await p.getByRole("button", { name: "試聴・変更" }).click();
+    }
     await pages[0].locator("[name=caption]").fill("落ち着いた声");
     await pages[0].getByRole("button", { name: "保存", exact: true }).click();
     await expect(pages[0].locator("#characterEditor")).not.toBeVisible();
@@ -250,6 +254,38 @@ test("Player discovery, shared editing, private preview and conflicts across par
     for (const c of contexts) await c.close();
   }
 });
+test("clearing chat history clears connected Player logs and cannot restore old text on reload", async ({
+  page,
+  context,
+}) => {
+  await page.goto(invite);
+  await expect(page.locator("#status")).toContainText("接続しました");
+  const accepted = post("clear-history", "消去する本文です。");
+  await expect(page.locator("#log li")).toHaveCount(1);
+  const management = await context.newPage();
+  await management.goto(app.adminUrl());
+  await openStep(management, "stepTuning");
+  management.once("dialog", (dialog) => dialog.dismiss());
+  await management
+    .getByRole("button", { name: "卓のチャット履歴を消去" })
+    .click();
+  expect(app.store.chat.get(accepted.messageId)).not.toBeNull();
+  management.once("dialog", (dialog) => dialog.accept());
+  await management
+    .getByRole("button", { name: "卓のチャット履歴を消去" })
+    .click();
+  await expect(management.locator("#notice")).toContainText(
+    "履歴を消去しました",
+  );
+  await expect(page.locator("#log li")).toHaveCount(0);
+  expect(app.store.chat.get(accepted.messageId)).toBeNull();
+  await page.reload();
+  await expect(page.locator("#status")).toContainText("接続しました");
+  await expect(page.locator("#log li")).toHaveCount(0);
+  post("after-clear", "新しい本文です。");
+  await expect(page.locator("#log li")).toHaveCount(1);
+  await expect(page.locator("#log li")).toContainText("新しい本文です。");
+});
 test("Player deletes only a character registration; shared voices survive and new speech rediscovers it", async ({
   browser,
 }) => {
@@ -273,6 +309,7 @@ test("Player deletes only a character registration; shared voices survive and ne
       await p.goto(invite);
       await expect(p.locator("#characters .list-item")).toHaveCount(2);
     }
+    await pages[0].getByRole("tab", { name: "キャラ・声設定" }).click();
     const row = pages[0]
       .locator("#characters .list-item")
       .filter({ has: pages[0].locator("strong", { hasText: "メリッサ" }) });
@@ -364,13 +401,13 @@ test("management startup link, simplified controls and reset confirmation", asyn
   const collectorGuide = page.getByText("chrome://extensions");
   await openStep(page, "stepCollector");
   await expect(collectorGuide).toBeVisible();
-  const publishText = page.getByLabel("Playerにセリフの本文を表示する");
+  const publishText = page.getByLabel("チャットとセリフの本文を共有する");
   await expect(publishText).toBeChecked();
   await publishText.uncheck();
-  await expect(page.locator("#notice")).toContainText("表示しません");
+  await expect(page.locator("#notice")).toContainText("共有を停止");
   expect(app.store.config.publishTextToPlayers).toBe(false);
   await publishText.check();
-  await expect(page.locator("#notice")).toContainText("表示します");
+  await expect(page.locator("#notice")).toContainText("共有します");
   expect(app.store.config.publishTextToPlayers).toBe(true);
   const pause = page.getByLabel("文と文の間（秒）");
   await expect(pause).toHaveValue("0.9");
@@ -754,6 +791,7 @@ test("Player organizes registered voices, previews privately and deletes only un
     for (const p of pages) {
       await observe(p);
       await p.goto(invite);
+      await p.getByRole("tab", { name: "キャラ・声設定" }).click();
       await p.getByText("登録済みの声を整理", { exact: true }).click();
       await expect(p.locator("#registeredVoiceCount")).toHaveText(
         `登録済みの声：${app.store.config.voiceProfiles.length} / 500件`,
@@ -832,6 +870,7 @@ test("voice deletion API rejects use added after rendering and supports authoriz
     c.voiceProfiles.push(spare);
   });
   await page.goto(invite);
+  await page.getByRole("tab", { name: "キャラ・声設定" }).click();
   await page.getByText("登録済みの声を整理", { exact: true }).click();
   const row = page
     .locator("#registeredVoices tbody tr")
@@ -890,6 +929,7 @@ test("voice deletion API rejects use added after rendering and supports authoriz
     c.characters = [];
   });
   await page.reload();
+  await page.getByRole("tab", { name: "キャラ・声設定" }).click();
   await page.getByText("登録済みの声を整理", { exact: true }).click();
   await expect(page.locator("#registeredVoices tbody tr")).toHaveCount(
     app.store.config.voiceProfiles.length,

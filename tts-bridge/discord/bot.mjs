@@ -39,6 +39,7 @@ export async function createBot({
     connect: 30000,
     recover: 5000,
     greeting: 15000,
+    leaveDelay: 1500,
     ...timeouts,
   };
   const client = new d.Client({
@@ -209,10 +210,12 @@ export async function createBot({
   }
   async function message(kind, currentGeneration) {
     let expired = false,
+      delayTimer,
       cancel;
     const cancelled = new Promise((resolve) => {
       cancel = () => {
         expired = true;
+        clearTimeout(delayTimer);
         resolve();
       };
     });
@@ -226,11 +229,20 @@ export async function createBot({
               const pcm = await greeting(kind);
               if (
                 !expired &&
-                pcm &&
+                pcm?.length &&
                 generation === currentGeneration &&
                 connection
-              )
+              ) {
                 await play(pcm);
+                if (
+                  kind === "leave" &&
+                  !expired &&
+                  generation === currentGeneration
+                )
+                  await new Promise((resolve) => {
+                    delayTimer = setTimeout(resolve, limits.leaveDelay);
+                  });
+              }
             })(),
           ]),
         limits.greeting,
@@ -239,6 +251,7 @@ export async function createBot({
       report("入室・退出メッセージを再生できませんでした");
     } finally {
       expired = true;
+      clearTimeout(delayTimer);
       if (cancelMessage === cancel) cancelMessage = undefined;
       if (generation === currentGeneration) stop();
     }

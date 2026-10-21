@@ -3,73 +3,233 @@
   <meta charset="utf-8" /><meta
     name="viewport"
     content="width=device-width,initial-scale=1"
-  /><title>卓の音声 | TRPG Voice Bridge</title
+  /><title>卓のチャットと音声 | TRPG Voice Bridge</title
   ><link rel="stylesheet" href="/web/style.css" />
   <main class="player">
-    <p class="eyebrow">TRPG VOICE BRIDGE</p>
-    <h1>物語に、声を。</h1>
-	<p>ここは音声再生用ページです。</p>
-	<hr />
-    <p>音声を有効にすると、この卓の新しいセリフが順番に流れます。</p>
-    <p class="muted">ほかのアプリで音声を聞く場合は、このページの音声を停止してください。停止中もログと声の設定を使えます。</p>
-    <p id="status" role="status">接続しています…</p>
-    <button id="enable">音声を有効にする</button
-    ><button id="latest" class="secondary">最新へ戻る</button
-    ><label
-      >音量
-      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8"
-    /></label>
-    <p class="muted">Discord Botで音声を再生している場合やエコーがひどい場合は、こちらの音声を停止するか最小にしてください。</p>
-    <h2 id="speaker">次の発言を待っています</h2>
-    <p id="caption"></p>
-    <details>
-      <summary>キャラクター別ミュート</summary>
-      <div id="mutes"></div>
-    </details>
-    <details>
-      <summary>セリフに感情・演技をつける</summary>
-      <p>
-        VTTのチャットで、セリフの中に全角の丸カッコか絵文字で指示を書きます。カッコの指示は読み上げられません。
-      </p>
-      <p>
-        例：（怒り）ふざけるな！（間）……もういい。<br />
-        例：😲えっ、本当に？<br />
-        例：（演技:震える声で、怯えながら）誰か……いるの？
-      </p>
-      <table>
-        <tr><th>書き方</th><th>絵文字</th><th>書き方</th><th>絵文字</th></tr>
-        <tr><td>（喜び）</td><td>😆</td><td>（怒り）</td><td>😠</td></tr>
-        <tr><td>（悲しみ）</td><td>😭</td><td>（驚き）</td><td>😲</td></tr>
-        <tr><td>（心配）</td><td>😟</td><td>（緊張）</td><td>😰</td></tr>
-        <tr><td>（安堵）</td><td>😌</td><td>（自信）</td><td>😎</td></tr>
-        <tr><td>（照れ）</td><td>🫣</td><td>（優しく）</td><td>🫶</td></tr>
-        <tr><td>（囁き）（ささやき）（小声）</td><td>👂</td><td>（笑い）</td><td>🤭</td></tr>
-        <tr><td>（ため息）</td><td>😮‍💨</td><td>（叫び）</td><td>😱</td></tr>
-        <tr><td>（早口）</td><td>⏩</td><td>（ゆっくり）</td><td>🐢</td></tr>
-        <tr><td>（眠そう）</td><td>😪</td><td>（懇願）</td><td>🙏</td></tr>
-        <tr><td>（ナレーション）</td><td>📖</td><td>（間）</td><td>⏸️</td></tr>
-      </table>
-      <ul>
-        <li>表の言葉か絵文字を書くと、その文の中で、書いた位置から演技が変わります。</li>
-        <li>表にない演技は「（演技:説明）」と書くと、そのセリフ全体に効きます。</li>
-        <li>それ以外のカッコ（例：剣（つるぎ））は、そのまま読み上げます。</li>
-        <li>指示は1つ100文字まで、「（演技:…）」の合計は200文字までです。</li>
-      </ul>
-      <p class="muted">
-        効き方は声やモデルによって違い、効かないこともあります。下の「自分だけで試聴」の欄にも同じ書き方が使えます。
-      </p>
-    </details>
-    <p class="muted">
-      画面ロックや長い中断の後は、再開ボタンを押してください。
-    </p>
-    <section>
-      <h2>セリフのログ</h2>
-      <p class="muted">
-        直近10分のセリフは「もう一度再生」で、自分だけもう一度聞けます。
-      </p>
-      <ol id="log" class="log"></ol>
+    <header class="player-header">
+      <p class="eyebrow">TRPG VOICE BRIDGE</p>
+      <h1>卓のチャット</h1>
+      <p id="status" role="status">接続しています…</p>
+      <div class="player-actions">
+        <button id="enable">音声を有効にする</button>
+        <button id="leaveRoom" class="secondary">退出</button>
+      </div>
+      <details id="audioOptions">
+        <summary>音声・再生設定（クリックで展開）</summary>
+        <p class="muted">
+          Discordなどで音声を聞く場合は、このページの音声を停止してください。停止中もチャットと声設定を使えます。
+        </p>
+        <button id="latest" class="secondary">最新へ戻る</button>
+        <label
+          >音量<input
+            id="volume"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.8"
+        /></label>
+        <h2 id="speaker">次の発言を待っています</h2>
+        <p id="caption"></p>
+        <details>
+          <summary>キャラクター別ミュート</summary>
+          <div id="mutes"></div>
+        </details>
+        <details>
+          <summary>
+            セリフに感情・演技をつける（クリックで展開・スクロールで確認）
+          </summary>
+          <p>
+            メッセージの中に全角の丸カッコか絵文字で指示を書きます。カッコの指示は読み上げられません。
+          </p>
+          <p>
+            例：（怒り）ふざけるな！（間）……もういい。<br />
+            例：😲えっ、本当に？<br />
+            例：（演技:震える声で、怯えながら）誰か……いるの？
+          </p>
+          <table>
+            <tr>
+              <th>書き方</th>
+              <th>絵文字</th>
+              <th>書き方</th>
+              <th>絵文字</th>
+            </tr>
+            <tr>
+              <td>（喜び）</td>
+              <td>😆</td>
+              <td>（怒り）</td>
+              <td>😠</td>
+            </tr>
+            <tr>
+              <td>（悲しみ）</td>
+              <td>😭</td>
+              <td>（驚き）</td>
+              <td>😲</td>
+            </tr>
+            <tr>
+              <td>（心配）</td>
+              <td>😟</td>
+              <td>（緊張）</td>
+              <td>😰</td>
+            </tr>
+            <tr>
+              <td>（安堵）</td>
+              <td>😌</td>
+              <td>（自信）</td>
+              <td>😎</td>
+            </tr>
+            <tr>
+              <td>（照れ）</td>
+              <td>🫣</td>
+              <td>（優しく）</td>
+              <td>🫶</td>
+            </tr>
+            <tr>
+              <td>（囁き）（ささやき）（小声）</td>
+              <td>👂</td>
+              <td>（笑い）</td>
+              <td>🤭</td>
+            </tr>
+            <tr>
+              <td>（ため息）</td>
+              <td>😮‍💨</td>
+              <td>（叫び）</td>
+              <td>😱</td>
+            </tr>
+            <tr>
+              <td>（早口）</td>
+              <td>⏩</td>
+              <td>（ゆっくり）</td>
+              <td>🐢</td>
+            </tr>
+            <tr>
+              <td>（眠そう）</td>
+              <td>😪</td>
+              <td>（懇願）</td>
+              <td>🙏</td>
+            </tr>
+            <tr>
+              <td>（ナレーション）</td>
+              <td>📖</td>
+              <td>（間）</td>
+              <td>⏸️</td>
+            </tr>
+          </table>
+          <ul>
+            <li>
+              表の言葉か絵文字を書くと、その文の中で、書いた位置から演技が変わります。
+            </li>
+            <li>
+              表にない演技は「（演技:説明）」と書くと、そのセリフ全体に効きます。
+            </li>
+            <li>
+              それ以外のカッコ（例：剣（つるぎ））は、そのまま読み上げます。
+            </li>
+            <li>
+              指示は1つ100文字まで、「（演技:…）」の合計は200文字までです。
+            </li>
+          </ul>
+          <p class="muted">
+            効き方は声やモデルによって違い、効かないこともあります。「キャラ・声設定」の「自分だけで試聴」でも同じ書き方が使えます。
+          </p>
+        </details>
+      </details>
+      <details id="chatterGuide">
+        <summary>Chatterの導入について</summary>
+        <p>
+          Chromeの拡張機能で、サイドパネルからPlayerと同じ機能を使えます。D&amp;D
+          Beyond
+          MapsなどのVTTを表示したまま、隣でチャット・声設定・音声再生を使えます。
+        </p>
+        <ol>
+          <li>下のリンクからZIPをダウンロードして展開します。</li>
+          <li>
+            Chromeのアドレスバーに
+            <code>chrome://extensions</code>
+            と入力して開き、「デベロッパーモード」をオンにします。
+          </li>
+          <li>
+            「パッケージ化されていない拡張機能を読み込む」を押し、展開したフォルダ（manifest.json
+            が入っているフォルダ）を選びます。
+          </li>
+          <li>
+            VTTを開いてChatterのアイコンを押し、管理者から受け取った招待リンクを貼って参加します。
+          </li>
+        </ol>
+        <ul>
+          <li>読み込んだフォルダは、削除・移動しないでください。</li>
+          <li>
+            Bridgeが更新されたら、ZIPをダウンロードし直して読み込み直してください。
+          </li>
+          <li>PlayerとChatterの両方で音声を有効にすると、二重に聞こえます。</li>
+        </ul>
+        <a href="/downloads/chatter.zip" download
+          >Chatter拡張（ZIP）をダウンロード</a
+        >
+      </details>
+      <div class="player-tabs" role="tablist" aria-label="Playerの表示">
+        <button
+          id="showChat"
+          role="tab"
+          aria-selected="true"
+          aria-controls="chatPanel"
+        >
+          チャット
+        </button>
+        <button
+          id="showSettings"
+          role="tab"
+          aria-selected="false"
+          aria-controls="settingsPanel"
+        >
+          キャラ・声設定
+        </button>
+      </div>
+    </header>
+    <section id="chatPanel" role="tabpanel" aria-labelledby="showChat">
+      <p id="chatStatus" role="status" class="muted"></p>
+      <ol id="log" class="log" aria-label="チャット履歴"></ol>
+      <button id="newMessages" type="button" class="secondary" hidden>
+        最新へ
+      </button>
+      <form id="chatComposer">
+        <div class="composer-character">
+          <label
+            >発言キャラ<select id="speakingCharacter">
+              <option value="">発言キャラを選択</option>
+            </select></label
+          >
+          <button id="createCharacter" type="button" class="secondary">
+            ＋キャラ作成
+          </button>
+          <button id="favoriteCharacter" type="button" class="secondary">
+            ☆ お気に入り
+          </button>
+        </div>
+        <label for="messageText">メッセージ</label>
+        <textarea
+          id="messageText"
+          rows="2"
+          placeholder="キャラとして話す…"
+          aria-describedby="messageHelp"
+        ></textarea>
+        <p id="messageHelp" class="muted">
+          Enterで送信・Shift+Enterで改行。500文字まで。
+        </p>
+        <p id="sendStatus" role="status"></p>
+        <button id="sendMessage" type="submit" disabled>送信</button>
+        <button id="retryMessage" type="button" hidden>同じ発言を再送</button>
+        <button id="editMessage" type="button" class="secondary" hidden>
+          下書きに戻す
+        </button>
+      </form>
     </section>
-    <section>
+    <section
+      id="settingsPanel"
+      role="tabpanel"
+      aria-labelledby="showSettings"
+      hidden
+    >
       <h2>キャラの声</h2>
       <p>全員で設定できます。声が未設定のキャラから表示します。</p>
       <p id="characterStatus" role="status"></p>
@@ -79,7 +239,14 @@
         <p id="registeredVoiceCount"></p>
         <div class="voice-table-scroll">
           <table id="registeredVoices">
-            <thead><tr><th scope="col">登録済みの声の名前</th><th scope="col">使用キャラ</th><th scope="col">試聴</th><th scope="col">削除</th></tr></thead>
+            <thead>
+              <tr>
+                <th scope="col">登録済みの声の名前</th>
+                <th scope="col">使用キャラ</th>
+                <th scope="col">試聴</th>
+                <th scope="col">削除</th>
+              </tr>
+            </thead>
             <tbody></tbody>
           </table>
         </div>
@@ -88,6 +255,23 @@
       </details>
     </section>
   </main>
+  <dialog id="newCharacterDialog">
+    <form id="newCharacterForm">
+      <h2>キャラを作成</h2>
+      <label
+        >新しいキャラ名<input
+          id="newCharacterName"
+          required
+          maxlength="200"
+          autocomplete="off"
+      /></label>
+      <p id="newCharacterStatus" role="status"></p>
+      <button id="saveNewCharacter" type="submit">作成</button>
+      <button id="cancelNewCharacter" type="button" class="secondary">
+        キャンセル
+      </button>
+    </form>
+  </dialog>
   <dialog id="characterEditor">
     <form id="characterForm">
       <h2>キャラの声を設定</h2>

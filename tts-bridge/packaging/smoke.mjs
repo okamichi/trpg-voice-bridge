@@ -1,3 +1,4 @@
+import { readChatterArchive } from "./chatter-archive.mjs";
 import assert from "node:assert/strict";
 import {
   cpSync,
@@ -23,7 +24,7 @@ import { checkProjectVersion } from "./version.mjs";
 const version = checkProjectVersion();
 
 const source = resolve(
-  process.argv[2] ??
+  process.argv.slice(2).find((arg) => arg !== "--browser") ??
     fileURLToPath(
       new URL(
         `../dist/trpg-voice-bridge-${version}-${process.platform}-${process.arch}.zip`,
@@ -166,6 +167,29 @@ try {
       .version,
     version,
   );
+  const chatterManifest = JSON.parse(
+    readFileSync(join(packageDir, "chatter/manifest.json")),
+  );
+  assert.equal(chatterManifest.version, version);
+  assert.equal(chatterManifest.host_permissions, undefined);
+  for (const file of [
+    "panel.html",
+    "panel.js",
+    "background.js",
+    "shared/player.js",
+    "shared/characters.js",
+    "shared/playback.js",
+    "shared/bridge-client.js",
+    "shared/chat-history.js",
+    "shared/chat-view.js",
+    "shared/style.css",
+    "shared/uuid.js",
+  ])
+    assert.ok(
+      readFileSync(join(packageDir, "chatter", file)).length > 10,
+      file,
+    );
+  assert.ok(!existsSync(join(packageDir, "chatter/build.mjs")));
   assert.match(
     execFileSync(
       join(
@@ -202,6 +226,9 @@ try {
     "/web/playback.js",
     "/web/characters.js",
     "/web/uuid.js",
+    "/web/bridge-client.js",
+    "/web/chat-history.js",
+    "/web/chat-view.js",
     "/web/ext/discord/admin.js",
   ]) {
     const r = await fetch(`${base}${path}`);
@@ -370,6 +397,107 @@ try {
       }
     });
   });
+  const extensionOrigin = `chrome-extension://${"a".repeat(32)}`;
+  const download = await fetch(`${base}/downloads/chatter.zip`);
+  assert.equal(download.status, 200);
+  assert.ok(
+    download.headers
+      .get("content-disposition")
+      .includes(`chatter-${version}.zip`),
+  );
+  const downloadedFiles = readChatterArchive(
+    Buffer.from(await download.arrayBuffer()),
+  );
+  for (const [name, content] of downloadedFiles)
+    assert.deepEqual(content, readFileSync(join(packageDir, "chatter", name)));
+  assert.equal(downloadedFiles.size, 13);
+  const chatterJoin = await fetch(`${base}/api/v1/chatter/join`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Chatter-Origin": extensionOrigin,
+    },
+    body: JSON.stringify({
+      invite: new URLSearchParams(new URL(invite.url).hash.slice(1)).get(
+        "invite",
+      ),
+    }),
+  });
+  assert.equal(chatterJoin.status, 200);
+  assert.equal(chatterJoin.headers.get("set-cookie"), null);
+  const chatter = await chatterJoin.json();
+  const chatterHeaders = {
+    Authorization: `Bearer ${chatter.token}`,
+    "X-Chatter-Origin": extensionOrigin,
+  };
+  assert.equal(
+    (
+      await fetch(`${base}/api/v1/rooms/${chatter.roomId}/state`, {
+        headers: chatterHeaders,
+      })
+    ).status,
+    200,
+  );
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${base.replace("http", "ws")}/ws`, {
+      origin: extensionOrigin,
+    });
+    const timeout = setTimeout(() => {
+      ws.terminate();
+      reject(Error("Chatter WebSocket timeout"));
+    }, 5000);
+    ws.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    ws.once("open", () =>
+      ws.send(
+        JSON.stringify({
+          type: "hello",
+          clientId: "package-chatter",
+          token: chatter.token,
+        }),
+      ),
+    );
+    ws.on("message", (data) => {
+      if (JSON.parse(data).type === "state.snapshot") {
+        clearTimeout(timeout);
+        ws.close();
+        resolve();
+      }
+    });
+  });
+  assert.equal(
+    (
+      await fetch(`${base}/api/v1/leave`, {
+        method: "POST",
+        headers: chatterHeaders,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await fetch(`${base}/api/v1/rooms/${chatter.roomId}/state`, {
+        headers: chatterHeaders,
+      })
+    ).status,
+    401,
+  );
+  if (process.argv.includes("--browser")) {
+    const { checkPackagedChatter } = await import("./chatter-browser.mjs");
+    await checkPackagedChatter({
+      packageDir,
+      temporary,
+      base,
+      invite: invite.url,
+    });
+    await request("/api/v1/admin/commands", "POST", {
+      command: "reset-settings",
+      commandId: randomUUID(),
+      confirm: true,
+    });
+  }
   const newUrl = "http://127.0.0.1:18088";
   await request("/api/v1/admin/provider", "PUT", {
     before: initial.provider,
@@ -419,6 +547,7 @@ try {
   assert.doesNotMatch(output + failure, /#access=|Bearer |trpg_admin=/);
   assert.ok(!(output + failure).includes(secret));
   assert.ok(!(output + failure).includes(token));
+  assert.ok(!(output + failure).includes(chatter.token));
   // A separate installation must generate its own secrets, not restore a key
   // embedded in the executable or copied from the developer's database.
   const originalDataDir = dataDir;
@@ -537,7 +666,7 @@ try {
   );
   await stop();
   console.log(
-    "PASS: isolated SEA, clean initial DB/config, fresh installation secrets, Unicode paths, SQLite restart/reset, assets, Player WebSocket, Collector auth, Discord/Opus, runtime settings/lock/model failure, missing runtime diagnosis, secret-free redirected logs",
+    "PASS: isolated SEA, clean initial DB/config, fresh installation secrets, Unicode paths, SQLite restart/reset, assets, Player and Chatter authentication/WebSockets, Collector auth, Discord/Opus, runtime settings/lock/model failure, missing runtime diagnosis, secret-free redirected logs",
   );
 } finally {
   await stop();

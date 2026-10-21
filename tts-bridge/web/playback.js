@@ -21,7 +21,7 @@ export class Playback {
     this.current = null;
     this.cancelled = new Set();
     this.loading = null;
-    this.manual = null;
+    this.manual = [];
     this.prefetched = null;
     this.lastEnded = null;
   }
@@ -73,7 +73,7 @@ export class Playback {
     this.pending.clear();
     this.cancelled.clear();
     this.started.clear();
-    this.manual = null;
+    this.manual = [];
     this.lastEnded = null;
     this.loading?.controller.abort();
     this.dropPrefetch();
@@ -88,7 +88,7 @@ export class Playback {
     this.enabled = false;
     this.generation++;
     this.pending.clear();
-    this.manual = null;
+    this.manual = [];
     this.lastEnded = null;
     this.loading?.controller.abort();
     this.dropPrefetch();
@@ -98,14 +98,21 @@ export class Playback {
   // A listener-requested replay plays on this page only, after the current
   // sound, and ignores mute and the live deadline.
   replay(item) {
+    const items = Array.isArray(item) ? item : [item];
     if (
       !this.enabled ||
-      this.cancelled.has(item.orderId) ||
-      item.sessionId !== this.meta?.sessionId ||
-      item.playbackEpoch !== this.meta?.playbackEpoch
+      !items.length ||
+      items.some(
+        (item) =>
+          this.cancelled.has(item.orderId) ||
+          item.sessionId !== this.meta?.sessionId ||
+          item.playbackEpoch !== this.meta?.playbackEpoch ||
+          (item.retainUntil !== undefined && item.retainUntil <= this.now()),
+      )
     )
       return false;
-    this.manual = item;
+    this.manual = [...items];
+    this.manualBatch = (this.manualBatch ?? 0) + 1;
     this.pump();
     return true;
   }
@@ -143,12 +150,12 @@ export class Playback {
     if (this.running || !this.enabled) return;
     this.running = true;
     try {
-      while (this.enabled && (this.manual || this.pending.size)) {
-        const manual = !!this.manual;
+      while (this.enabled && (this.manual.length || this.pending.size)) {
+        const manual = this.manual.length > 0,
+          batch = this.manualBatch;
         const item =
-          this.manual ??
+          this.manual.shift() ??
           [...this.pending.values()].sort((a, b) => a.orderSeq - b.orderSeq)[0];
-        this.manual = null;
         this.pending.delete(item.orderId);
         if (
           !manual &&
@@ -165,9 +172,7 @@ export class Playback {
           // The next sentence of the same message waits its pause, counted
           // from the end of the previous one.
           const wait =
-            !manual &&
-            item.pauseBeforeMs > 0 &&
-            this.lastEnded?.groupId === item.groupId
+            item.pauseBeforeMs > 0 && this.lastEnded?.groupId === item.groupId
               ? item.pauseBeforeMs - (this.now() - this.lastEnded.at)
               : 0;
           if (wait > 0) await this.sleep(wait);
@@ -191,6 +196,7 @@ export class Playback {
             this.onState("idle", item);
           }
         } catch (e) {
+          if (manual && batch === this.manualBatch) this.manual = [];
           if (
             generation === this.generation &&
             !this.cancelled.has(item.orderId)
@@ -202,7 +208,7 @@ export class Playback {
       }
     } finally {
       this.running = false;
-      if (this.enabled && (this.manual || this.pending.size))
+      if (this.enabled && (this.manual.length || this.pending.size))
         queueMicrotask(() => this.pump());
     }
   }
