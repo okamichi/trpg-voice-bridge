@@ -31,6 +31,9 @@ export class SpeechModels {
           "models.jsonを確認するか、保存先を設定し直してください。";
     }
   }
+  get downloading() {
+    return active(this.job);
+  }
   validateDir(dir) {
     if (
       typeof dir !== "string" ||

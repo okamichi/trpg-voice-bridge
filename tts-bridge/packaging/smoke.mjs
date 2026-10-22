@@ -8,9 +8,10 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, resolve, isAbsolute, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
@@ -90,12 +91,19 @@ async function unusedPort() {
   return port;
 }
 const port = await unusedPort();
-const base = `http://127.0.0.1:${port}`;
-async function start(extra = []) {
+let base = `http://127.0.0.1:${port}`;
+async function start(extra = [], launch = {}) {
   child = spawn(
     exe,
-    ["--no-browser", "--data-dir", dataDir, "--port", String(port), ...extra],
-    { cwd, env, stdio: ["ignore", "pipe", "pipe"] },
+    launch.args ?? [
+      "--no-browser",
+      "--data-dir",
+      dataDir,
+      "--port",
+      String(port),
+      ...extra,
+    ],
+    { cwd, env: launch.env ?? env, stdio: ["ignore", "pipe", "pipe"] },
   );
   child.stdout.on("data", (s) => (output += s));
   child.stderr.on("data", (s) => (failure += s));
@@ -653,6 +661,92 @@ try {
   );
   assert.equal((await request("/api/v1/admin/runtime")).active.ttsPort, 18089);
   await stop();
+  // Startup settings saved on the admin page apply through a restart inside
+  // the process, and the data-directory lock moves with them.
+  const startupFile = join(temporary, "起動 設定", "startup.json");
+  mkdirSync(dirname(startupFile));
+  writeFileSync(
+    startupFile,
+    JSON.stringify({ dataDir, host: "127.0.0.1", port, publicOrigin: "" }),
+  );
+  await start([], {
+    args: ["--no-browser"],
+    env: { ...env, TTS_STARTUP_FILE: startupFile },
+  });
+  const startup = await request("/api/v1/admin/startup");
+  assert.equal(startup.file, startupFile);
+  assert.deepEqual(startup.locks, {});
+  assert.equal(startup.active.dataDir, dataDir);
+  assert.equal((await request("/api/v1/admin/diagnostics")).canRestart, true);
+  const restartedDir = join(temporary, "再起動後 data");
+  const restartedPort = await unusedPort();
+  const { restartId } = await request(
+    "/api/v1/admin/startup",
+    "PUT",
+    { dataDir: restartedDir, port: restartedPort },
+    secret,
+    202,
+  );
+  let restarted;
+  for (let i = 0; i < 300 && restarted?.state !== "done"; i++) {
+    await delay(100);
+    try {
+      const r = await fetch(`${base}/api/v1/restart-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: restartId }),
+      });
+      if (r.ok) restarted = await r.json();
+    } catch {
+      /* Between the two starts. */
+    }
+  }
+  assert.equal(restarted?.state, "done", JSON.stringify(restarted));
+  assert.match(
+    restarted.adminUrl,
+    new RegExp(`^http://127\\.0\\.0\\.1:${restartedPort}/admin/#access=`),
+  );
+  assert.equal(child.exitCode, null, "the same process keeps running");
+  assert.equal(JSON.parse(readFileSync(startupFile)).port, restartedPort);
+  assert.ok(existsSync(join(restartedDir, "bridge.sqlite")));
+  // The old data directory is free for another Bridge.
+  const reusePort = await unusedPort();
+  const reuse = spawn(
+    exe,
+    ["--no-browser", "--data-dir", dataDir, "--port", String(reusePort)],
+    { cwd, env, stdio: ["ignore", "ignore", "pipe"] },
+  );
+  let reuseError = "";
+  reuse.stderr.on("data", (s) => (reuseError += s));
+  for (let i = 0; i < 150; i++) {
+    assert.equal(reuse.exitCode, null, `old data directory: ${reuseError}`);
+    try {
+      if ((await fetch(`http://127.0.0.1:${reusePort}/healthz`)).ok) break;
+    } catch {}
+    await delay(100);
+  }
+  const reuseExit = new Promise((resolve) => reuse.once("close", resolve));
+  const reuseShutdown = await fetch(
+    `http://127.0.0.1:${reusePort}/api/v1/admin/shutdown`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${secret}`,
+      },
+      body: "{}",
+    },
+  );
+  assert.equal(reuseShutdown.status, 200);
+  assert.equal(await reuseExit, 0);
+  const startupDataDir = dataDir;
+  dataDir = restartedDir;
+  base = `http://127.0.0.1:${restartedPort}`;
+  assert.ok((await fetch(`${base}/healthz`)).ok);
+  await stop();
+  dataDir = startupDataDir;
+  base = `http://127.0.0.1:${port}`;
+  assert.doesNotMatch(output + failure, /#access=|Bearer |trpg_admin=/);
   // A damaged runtime must be diagnosed, not silently reported as installed.
   const moduleDir = join(packageDir, "runtime/discord/node_modules/opusscript");
   renameSync(moduleDir, `${moduleDir}.missing`);
@@ -666,7 +760,7 @@ try {
   );
   await stop();
   console.log(
-    "PASS: isolated SEA, clean initial DB/config, fresh installation secrets, Unicode paths, SQLite restart/reset, assets, Player and Chatter authentication/WebSockets, Collector auth, Discord/Opus, runtime settings/lock/model failure, missing runtime diagnosis, secret-free redirected logs",
+    "PASS: isolated SEA, clean initial DB/config, fresh installation secrets, Unicode paths, SQLite restart/reset, assets, Player and Chatter authentication/WebSockets, Collector auth, Discord/Opus, runtime settings/lock/model failure, startup settings restart, missing runtime diagnosis, secret-free redirected logs",
   );
 } finally {
   await stop();

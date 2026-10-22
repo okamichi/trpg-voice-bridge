@@ -59,8 +59,8 @@ flowchart LR
 | 役割 | 発言を受け取り、キャラの声を選んでTTSに音声を作らせ、Player・Chatter・Discord Botに配る。管理画面とPlayerのページも配信する |
 | 動かす場所 | 音声担当者のPC。既定は `http://127.0.0.1:8090` |
 | 起動 | ダウンロードしたアプリは `trpg-voice-bridge`（Windowsは `.exe`）。ソースからは `tts-bridge/` で `npm start` |
-| 保存するもの | 保存先（`--data-dir`）の `bridge.sqlite` に、設定・キャラ・声と、チャット本文（直近7日・卓ごとに最大10,000件）。音声のWAVは `audio/` の一時ファイル |
-| 公開 | 既定では同じPCからしか開けない。別のPCの参加者にPlayer・Chatterを使わせるときは、`TTS_BRIDGE_HOST` と `TTS_PUBLIC_ORIGIN` を指定して起動する（[Playerの公開](online.md)） |
+| 保存するもの | 保存先（管理画面の「0 起動設定」か `--data-dir`）の `bridge.sqlite` に、設定・キャラ・声と、チャット本文（直近7日・卓ごとに最大10,000件）。音声のWAVは `audio/` の一時ファイル |
+| 公開 | 既定では同じPCからしか開けない。別のPCの参加者にPlayer・Chatterを使わせるときは、管理画面の「0 起動設定」で待ち受けアドレスと公開Originを設定する（[Playerの公開](online.md)） |
 
 外のアドレスから使えるのは、PlayerとChatterの参加者用の機能だけです。管理画面とCollectorの接続は、`127.0.0.1` でしか受け付けません。
 
@@ -225,7 +225,7 @@ TTSを用意せず、PlayerかChatterのチャットだけを使います。TTS�
 | 状況 | 公開 |
 | --- | --- |
 | 全員が音声担当者のPCで操作する、または参加者はDiscordで聞くだけ | 不要 |
-| 別のPCの参加者がPlayer・Chatterを使う | 必要（同じLANならLANのアドレス、インターネット越しならグローバルアドレスを `TTS_PUBLIC_ORIGIN` に指定） |
+| 別のPCの参加者がPlayer・Chatterを使う | 必要（同じLANならLANのアドレス、インターネット越しならグローバルアドレスを公開Originに指定） |
 
 ### 音声を聞く場所
 

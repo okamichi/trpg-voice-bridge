@@ -428,3 +428,36 @@ test("stable character and log nodes, live voice states, and mutes track charact
   await expect(page.locator("#mutes input")).toHaveCount(0);
   await expect(page.locator("#mutes")).toContainText("キャラを作成すると");
 });
+
+test("HTML-like names and encoded chat stay inert for other participants and after reload", async ({
+  page,
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const other = await context.newPage();
+  const name = `<img src=x onerror="window.__injected=1">`;
+  const text = `&lt;svg onload=alert(1)&gt; '); DROP TABLE chat_messages; --`;
+  try {
+    await page.goto(invite);
+    await other.goto(invite);
+    await create(page, name);
+    await send(page, text);
+    for (const viewer of [page, other]) {
+      await expect(viewer.locator("#log")).toContainText(name);
+      await expect(viewer.locator("#log")).toContainText(text);
+      await expect(
+        viewer.locator("#log img, #log svg, #log script"),
+      ).toHaveCount(0);
+      expect(await viewer.evaluate(() => window.__injected)).toBeUndefined();
+    }
+    await other.reload();
+    await expect(other.locator("#log")).toContainText(name);
+    await expect(other.locator("#log")).toContainText(text);
+    await expect(other.locator("#log img, #log svg, #log script")).toHaveCount(
+      0,
+    );
+    expect(await other.evaluate(() => window.__injected)).toBeUndefined();
+  } finally {
+    await context.close();
+  }
+});

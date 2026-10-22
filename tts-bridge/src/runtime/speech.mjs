@@ -259,3 +259,48 @@ export class SpeechRuntime {
     this.status = "stopped";
   }
 }
+
+// Start hooks for Bridge with the bundled TTS. Each data directory has its own
+// runtime and lock; a new directory's lock is taken while Bridge still runs.
+export function speechLifecycle(options) {
+  let runtime;
+  const open = async (dataDir) => {
+    const created = new SpeechRuntime({ ...options, dataDir });
+    await created.acquire();
+    return created;
+  };
+  return {
+    get runtime() {
+      return runtime;
+    },
+    prepare: async (next, previous) => {
+      if (runtime?.models.downloading)
+        throw Object.assign(
+          exposed(
+            "モデルのダウンロード中は再起動できません。ダウンロードを中止してから再起動してください",
+          ),
+          { status: 409 },
+        );
+      // The new directory may belong to another Bridge or hold a broken
+      // runtime.json; both conflict with the request rather than reject it.
+      if (next.dataDir !== previous.dataDir)
+        return open(next.dataDir).catch((e) => {
+          throw Object.assign(e, { status: e.status ?? 409 });
+        });
+    },
+    // Until options reach the launcher, this hook owns cleanup on failure.
+    boot: async (active, prepared, options) => {
+      const created = (runtime = prepared ?? (await open(active.dataDir)));
+      try {
+        return {
+          ...(await options(created)),
+          runtime: created,
+          onClose: () => created.close(),
+        };
+      } catch (error) {
+        await created.close();
+        throw error;
+      }
+    },
+  };
+}

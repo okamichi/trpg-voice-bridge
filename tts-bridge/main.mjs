@@ -3,13 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startBridge } from "./src/runtime/launcher.mjs";
-const port = Number(process.env.TTS_BRIDGE_PORT ?? 8090),
-  host = process.env.TTS_BRIDGE_HOST ?? "127.0.0.1";
-const localOrigin = process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${port}`;
-const dataDir = resolve(
-  process.env.TTS_DATA_DIR ??
-    fileURLToPath(new URL("./data/", import.meta.url)),
-);
+import { StartupSettings, launchOverrides } from "./src/runtime/startup.mjs";
 const configPath = resolve(
   process.env.TTS_CONFIG_FILE ??
     fileURLToPath(new URL("./config.json", import.meta.url)),
@@ -24,21 +18,41 @@ try {
   if (error.code !== "ERR_MODULE_NOT_FOUND" || error.url !== extensionUrl.href)
     console.error("拡張を読み込めませんでした。Bridgeのみ起動します。");
 }
-await startBridge({
-  credits: credits(
-    readFileSync(new URL("../LICENSE", import.meta.url), "utf8"),
-  ),
-  port,
-  host,
-  extensions,
-  dataDir,
-  initial: loadDefaults(),
-  loadDefaults,
-  localOrigin,
-  publicOrigin: process.env.TTS_PUBLIC_ORIGIN ?? "",
-  onListening: (app) => {
-    if (process.stdout.isTTY)
-      console.log(`管理用リンク（共有しないでください）: ${app.adminUrl()}`);
-    else console.log("管理用リンクを表示するには端末から起動してください。");
-  },
-});
+const bridgeCredits = credits(
+  readFileSync(new URL("../LICENSE", import.meta.url), "utf8"),
+);
+try {
+  const startup = new StartupSettings({
+    file: resolve(
+      process.env.TTS_STARTUP_FILE ??
+        fileURLToPath(new URL("./startup.json", import.meta.url)),
+    ),
+    defaults: {
+      dataDir: resolve(fileURLToPath(new URL("./data/", import.meta.url))),
+      host: "127.0.0.1",
+      port: 8090,
+      publicOrigin: "",
+    },
+    ...launchOverrides(),
+  });
+  await startBridge({
+    startup,
+    loadDefaults,
+    boot: (active) => ({
+      credits: bridgeCredits,
+      extensions,
+      localOrigin:
+        process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${active.port}`,
+    }),
+    onListening: (app, { restarted }) => {
+      if (process.stdout.isTTY)
+        console.log(`管理用リンク（共有しないでください）: ${app.adminUrl()}`);
+      else if (!restarted)
+        console.log("管理用リンクを表示するには端末から起動してください。");
+    },
+  });
+} catch (error) {
+  if (!error?.expose) throw error;
+  console.error(error.message);
+  process.exitCode = 1;
+}

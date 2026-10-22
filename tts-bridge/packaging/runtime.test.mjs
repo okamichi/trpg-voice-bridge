@@ -14,8 +14,14 @@ import { createInterface } from "node:readline";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { RuntimeSettings, platformBackends } from "../src/runtime/settings.mjs";
-import { SpeechRuntime, stopMessage } from "../src/runtime/speech.mjs";
+import {
+  SpeechRuntime,
+  speechLifecycle,
+  stopMessage,
+} from "../src/runtime/speech.mjs";
 import { createApp } from "../src/http.mjs";
+import { startBridge } from "../src/runtime/launcher.mjs";
+import { StartupSettings } from "../src/runtime/startup.mjs";
 import { initialConfig } from "../src/store.mjs";
 
 test("runtime settings preserve saved values under CLI overrides and reject invalid input", () => {
@@ -163,7 +169,7 @@ function supervise(args) {
 }
 async function until(fn) {
   for (let i = 0; i < 200; i++) {
-    const result = fn();
+    const result = await fn();
     if (result) return result;
     await delay(50);
   }
@@ -405,6 +411,167 @@ test(
     } finally {
       await second.close();
       await first.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "a restart moves the data-directory lock and refuses a directory another Bridge owns",
+  {
+    skip: !existsSync(
+      join(
+        runtimeDir,
+        process.platform === "win32"
+          ? "bridge-supervisor.exe"
+          : "bridge-supervisor",
+      ),
+    ),
+  },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-restart-"));
+    const probe = createServer();
+    await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+    const port = probe.address().port;
+    await new Promise((r) => probe.close(r));
+    const speech = speechLifecycle({ runtimeDir });
+    const handle = await startBridge({
+      startup: new StartupSettings({
+        file: join(dir, "startup.json"),
+        defaults: {
+          dataDir: join(dir, "a"),
+          host: "127.0.0.1",
+          port,
+          publicOrigin: "",
+        },
+      }),
+      prepare: speech.prepare,
+      boot: (active, prepared) =>
+        speech.boot(active, prepared, () => {
+          const initial = initialConfig({});
+          initial.provider.type = "mock";
+          return {
+            initial,
+            localOrigin: `http://127.0.0.1:${active.port}`,
+          };
+        }),
+    });
+    const admin = async (path, method, body) => {
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/v1/admin/${path}`,
+        {
+          method,
+          headers: {
+            Authorization: `Bearer ${handle.app.store.secrets.admin}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      return { status: response.status, data: await response.json() };
+    };
+    let other;
+    try {
+      const first = speech.runtime;
+      other = new SpeechRuntime({ dataDir: join(dir, "b"), runtimeDir });
+      await other.acquire();
+      const refused = await admin("startup", "PUT", {
+        dataDir: join(dir, "b"),
+      });
+      assert.equal(refused.status, 409);
+      assert.match(refused.data.error, /同じ保存先のBridge/);
+      assert.equal(speech.runtime, first);
+      await other.close();
+      other = undefined;
+      // A model download in progress also keeps Bridge as it is.
+      first.models.job = { status: "running" };
+      const downloading = await admin("restart", "POST", {});
+      assert.equal(downloading.status, 409);
+      assert.match(downloading.data.error, /ダウンロード中/);
+      first.models.job = null;
+      const { status, data } = await admin("startup", "PUT", {
+        dataDir: join(dir, "b"),
+      });
+      assert.equal(status, 202);
+      const done = await until(async () => {
+        try {
+          const r = await fetch(
+            `http://127.0.0.1:${port}/api/v1/restart-status`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: data.restartId }),
+            },
+          );
+          const result = r.ok ? await r.json() : null;
+          return result?.state === "restarting" ? null : result;
+        } catch {
+          return null;
+        }
+      });
+      assert.equal(done.state, "done");
+      assert.notEqual(speech.runtime, first);
+      assert.equal(speech.runtime.dataDir, join(dir, "b"));
+      const reuse = new SpeechRuntime({ dataDir: join(dir, "a"), runtimeDir });
+      await reuse.acquire();
+      await reuse.close();
+      const blocked = new SpeechRuntime({
+        dataDir: join(dir, "b"),
+        runtimeDir,
+      });
+      await assert.rejects(blocked.acquire(), /同じ保存先のBridge/);
+    } finally {
+      await other?.close();
+      await handle.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "failed speech boot releases both newly acquired and prepared data-directory locks",
+  {
+    skip: !existsSync(
+      join(
+        runtimeDir,
+        process.platform === "win32"
+          ? "bridge-supervisor.exe"
+          : "bridge-supervisor",
+      ),
+    ),
+  },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-boot-failure-"));
+    const speech = speechLifecycle({ runtimeDir });
+    try {
+      for (const preflight of [false, true]) {
+        const active = {
+          dataDir: join(dir, preflight ? "prepared" : "direct"),
+        };
+        const prepared = preflight
+          ? await speech.prepare(active, { dataDir: join(dir, "previous") })
+          : undefined;
+        const failure = new Error("options construction failed");
+        await assert.rejects(
+          speech.boot(active, prepared, async () => {
+            throw failure;
+          }),
+          (error) => error === failure,
+        );
+        assert.equal(speech.runtime.status, "stopped");
+        // Verify the real supervisor's lock, not just the close method call.
+        const replacement = new SpeechRuntime({
+          dataDir: active.dataDir,
+          runtimeDir,
+        });
+        try {
+          await replacement.acquire();
+        } finally {
+          await replacement.close();
+        }
+      }
+    } finally {
+      await speech.runtime?.close();
       rmSync(dir, { recursive: true, force: true });
     }
   },

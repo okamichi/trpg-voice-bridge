@@ -1,0 +1,3 @@
+# packaging/version.mjs rewrites these with JSON.stringify.
+chatter/manifest.json
+collector/manifest.json

@@ -34,6 +34,65 @@
       <p id="failure"></p>
       <button id="recover">Irodori側の処理終了を確認して復帰</button>
     </section>
+    <!-- Added by admin.js only when this Bridge can restart itself. -->
+    <template id="startupTemplate">
+      <details class="step" id="stepStartup">
+        <summary>
+          <span class="step-num">0</span><span class="step-title">起動設定</span
+          ><small>データの保存先・待受アドレスの変更等</small
+          ><span class="state" id="startupState"></span>
+        </summary>
+        <div class="step-body">
+          <div class="part">
+            <p>
+              Bridgeの保存先・待ち受け・公開Originを変えられます。「保存して再起動」を押すと、Bridgeを再起動して反映します。
+            </p>
+            <form id="startupForm">
+              <label
+                >保存先（データディレクトリ）<input
+                  id="startupDataDir"
+                  type="text"
+              /></label>
+              <small class="field-note" id="startupDataDirNote"></small>
+              <label
+                >待ち受けアドレス<select id="startupHost">
+                  <option value="127.0.0.1">
+                    127.0.0.1（このPCからだけ接続できる）
+                  </option>
+                  <option value="0.0.0.0">
+                    0.0.0.0（ほかのPCからも接続できる）
+                  </option>
+                </select></label
+              >
+              <small class="field-note" id="startupHostNote"></small>
+              <label
+                >ポート<input
+                  id="startupPort"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  required
+              /></label>
+              <small class="field-note" id="startupPortNote"></small>
+              <label
+                >公開Origin :
+                インターネットを介して参加者がPlayer/Chatterを利用する場合のサイトアドレスとなります。<input
+                  id="startupPublicOrigin"
+                  type="text"
+                  placeholder="例：http://203.0.113.10:8090"
+              /></label>
+              <small class="field-note" id="startupPublicOriginNote"></small>
+              <button>保存して再起動</button
+              ><button type="button" class="danger" id="startupReset">
+                設定初期化
+              </button>
+            </form>
+            <p class="error" id="startupError" hidden></p>
+            <p class="muted" id="startupFile"></p>
+          </div>
+        </div>
+      </details>
+    </template>
     <details class="step" id="stepTts">
       <summary>
         <span class="step-num"></span><span class="step-title">TTSの準備</span
@@ -44,7 +103,13 @@
           <h3>TTSの起動設定</h3>
           <p id="runtimeStatus"></p>
           <div class="callout" id="restartNotice" hidden>
-            <p>
+            <p id="restartNoticeRestart" hidden>
+              保存した設定を反映するには、Bridgeを再起動してください。
+            </p>
+            <button id="runtimeRestart" class="secondary" type="button" hidden>
+              Bridgeを再起動
+            </button>
+            <p id="restartNoticeShutdown">
               保存した設定を反映するには、Bridgeを終了してから起動し直してください。
             </p>
             <button data-shutdown class="secondary" type="button">
@@ -146,13 +211,13 @@
           <h3>Collectorの導入</h3>
           <p>
             あなたが参加者を代表としてFVTTやユドナリウム、ココフォリア
-            などのVTTからチャットメッセージを取り込む場合に導入します。			
+            などのVTTからチャットメッセージを取り込む場合に導入します。
           </p>
           <p>
-			チャット機能の無いVTTの場合は、参加者全員がChrome拡張機能
-			でChatterを導入し（拡張機能を導入したく無い場合はPlayerで
-			も可）、Chatterでチャットすることで音声生成・再生が可能で、
-			このCollectorはインストール・接続ともに不要です。
+            チャット機能の無いVTTの場合は、参加者全員がChrome拡張機能
+            でChatterを導入し（拡張機能を導入したく無い場合はPlayerで
+            も可）、Chatterでチャットすることで音声生成・再生が可能で、
+            このCollectorはインストール・接続ともに不要です。
           </p>
           <ol>
             <li>
@@ -206,7 +271,7 @@
           <p>
             チャット機能のないVTTでは、参加者がChatterやPlayerでキャラ
             の声を作成して発言でき、
-			CollectorやTTSの準備が終わっていなくてもチャットを使えます。
+            CollectorやTTSの準備が終わっていなくてもチャットを使えます。
           </p>
           <p class="muted">
             Chatter拡張でも、この参加URLを入力して同じ卓へ参加できます。
@@ -237,7 +302,10 @@
             />チャットによる登録機能を有効にする</label
           >
           <p id="chatVoiceRegistrationHelp" class="muted">
-            チャットで「（ブリッジ声登録）若くて透き通るような女性の声。」のような発言キャラの声の自動登録コマンドを受け付ける。「（ブリッジ声削除）」で発言キャラの声の割り当てを解除し、声が未設定の状態に戻す。
+            VTT
+            のチャットで「（ブリッジ声登録）若くて透き通るような女性の声。」のような発言キャラの声の自動登録コマンドを受け付ける。「（ブリッジ声削除）」で発言キャラの声の割り当てを解除し、声が未設定の状態に戻す。
+            この機能を Discord Bot のボイスチャットと併用すれば、参加者に
+            Player/Chatter を公開しなくても声の登録が可能となります。
           </p>
           <div id="voiceCommandDiagnostics"></div>
         </div>
@@ -281,6 +349,22 @@
           /></label>
           <p class="muted">
             長いセリフを分割して生成・再生するときに、文と文の間に入れる無音の長さです。次のセリフから反映します。
+          </p>
+        </div>
+        <div class="part">
+          <h3>音声の配信形式</h3>
+          <label
+            >PlayerとChatterへの配信形式<select id="audioFormat">
+              <option value="opus32">Opus 32kbps（軽い）</option>
+              <option value="opus64">Opus 64kbps（標準）</option>
+              <option value="opus96">Opus 96kbps（高音質）</option>
+              <option value="wav256">WAV 256kbps（16kHz）</option>
+              <option value="wav">WAV（無圧縮）</option>
+            </select></label
+          >
+          <p class="muted">
+            インターネット越しの参加者がいるときはOpusがおすすめです。Opusを再生できないブラウザと、Opusの変換器（Discord連携用の追加ランタイム）がない環境には、WAV（無圧縮）で送ります。WAV
+            256kbpsは、元の音声が16kHz以下なら無圧縮のまま送ります。Discordへの音声は変わりません。次に取得する音声から反映します。
           </p>
         </div>
         <div class="part">

@@ -47,6 +47,10 @@ p {
 small {
   color: var(--muted);
 }
+.audio-timeout {
+  cursor: help;
+  text-decoration: underline dotted;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
@@ -295,6 +299,11 @@ th {
 .field-note {
   display: block;
   margin: -8px 0 10px;
+  overflow-wrap: anywhere;
+}
+/* 起動設定に出る保存先などの長いパス */
+#startupFile,
+#startupError {
   overflow-wrap: anywhere;
 }
 

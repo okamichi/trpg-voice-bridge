@@ -1,7 +1,26 @@
-import { readLimited } from "../synthesis.mjs";
 import { parseDelivery } from "../delivery.mjs";
 import { check, voiceSchema, DELIVERY_CAPTION_MODES } from "./contracts.mjs";
 export const AUDIO_LIMIT = 25 * 1024 * 1024;
+export async function readLimited(response, limit) {
+  if (!response.body || Number(response.headers.get("content-length")) > limit)
+    throw new Error("応答が大きすぎます");
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) throw new Error("応答が大きすぎます");
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks);
+  } catch (error) {
+    await reader.cancel();
+    throw error;
+  }
+}
 export function inspectWav(b) {
   check(
     b.length >= 44 &&

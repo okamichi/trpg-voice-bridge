@@ -508,3 +508,58 @@ test("clear during generation cannot revive chat or audio captions; stale notifi
     false,
   );
 });
+
+test("hostile strings remain data and prototype fields cannot change characters", async (t) => {
+  const a = await setup(t);
+  const text = `'); DROP TABLE chat_messages; -- $(echo injected) &lt;img src=x onerror=alert(1)&gt;`;
+  const response = await a.call(
+    a.root + "messages",
+    "POST",
+    a.input(text),
+    a.one,
+  );
+  assert.equal(response.status, 201);
+  const accepted = await response.json();
+  assert.equal(a.store.chat.get(accepted.messageId).text, text);
+  for (const bad of ["<img src=x onerror=alert(1)>", "\u0000bad"])
+    assert.equal(
+      (await a.call(a.root + "messages", "POST", a.input(bad), a.one)).status,
+      422,
+    );
+  const displayName = `<svg onload=alert(1)>'); DROP TABLE characters; --`;
+  const created = await a.call(
+    a.root + "characters",
+    "POST",
+    { displayName },
+    a.one,
+  );
+  assert.equal(created.status, 201);
+  const character = (await created.json()).value;
+  assert.equal(character.displayName, displayName);
+  const value = JSON.parse(
+    '{"__proto__":{"polluted":true},"displayName":"changed"}',
+  );
+  const rejected = await a.call(
+    a.root + "characters/" + character.id,
+    "PATCH",
+    { before: character, value },
+    a.one,
+  );
+  assert.equal(rejected.status, 422);
+  assert.equal({}.polluted, undefined);
+  assert.equal(
+    a.store.config.characters.find((c) => c.id === character.id).displayName,
+    displayName,
+  );
+  assert.equal(
+    (
+      await a.call(
+        a.root + "messages",
+        "POST",
+        a.input("引き続き送信できます"),
+        a.one,
+      )
+    ).status,
+    201,
+  );
+});
