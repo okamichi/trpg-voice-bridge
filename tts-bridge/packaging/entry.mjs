@@ -7,9 +7,9 @@ import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
-import { SpeechRuntime } from "../src/runtime/speech.mjs";
-import { exposed } from "../src/runtime/settings.mjs";
+import { speechLifecycle } from "../src/runtime/speech.mjs";
 import { startBridge } from "../src/runtime/launcher.mjs";
+import { StartupSettings, launchOverrides } from "../src/runtime/startup.mjs";
 import { readAsset } from "../src/runtime/assets.mjs";
 import { createExtension } from "../discord/extension.mjs";
 import { loadDependencies } from "../discord/bot.mjs";
@@ -93,9 +93,6 @@ async function main() {
     await selfTest();
     return;
   }
-  const port = Number(values.port ?? process.env.TTS_BRIDGE_PORT ?? 8090);
-  if (!Number.isInteger(port) || port < 1 || port > 65535)
-    throw exposed("Bridgeのポートは1～65535で指定してください");
   const root =
     process.platform === "darwin"
       ? join(homedir(), "Library/Application Support/TRPG-Voice-Bridge")
@@ -103,54 +100,70 @@ async function main() {
           process.env.LOCALAPPDATA ?? join(homedir(), "AppData/Local"),
           "TRPG-Voice-Bridge",
         );
-  const dataDir = resolve(
-    values["data-dir"] ?? process.env.TTS_DATA_DIR ?? join(root, "data"),
-  );
+  const startup = new StartupSettings({
+    file: resolve(process.env.TTS_STARTUP_FILE ?? join(root, "startup.json")),
+    defaults: {
+      dataDir: join(root, "data"),
+      host: "127.0.0.1",
+      port: 8090,
+      publicOrigin: "",
+    },
+    ...launchOverrides(process.env, {
+      dataDir: values["data-dir"],
+      port: values.port,
+    }),
+  });
   const loadDefaults = process.env.TTS_CONFIG_FILE
     ? () => JSON.parse(readFileSync(resolve(process.env.TTS_CONFIG_FILE)))
     : () => JSON.parse(readAsset("config.json"));
-  const initial = loadDefaults();
-  const runtime = new SpeechRuntime({
-    dataDir,
+  const bridgeCredits = credits(
+    readAsset("credits/TRPG-Voice-Bridge-LICENSE").toString("utf8"),
+    readAsset("credits/speech.cpp-LICENSE").toString("utf8"),
+    JSON.parse(readAsset("build-info.json")).speech.speech,
+  );
+  // Launch options for the bundled TTS apply to every start of this process.
+  const ttsOverrides = {
+    ...(values.tts !== undefined ? { mode: values.tts } : {}),
+    ...(values.model !== undefined ? { model: values.model } : {}),
+    ...(values["tts-port"] !== undefined
+      ? { ttsPort: Number(values["tts-port"]) }
+      : {}),
+    ...(values["tts-backend"] !== undefined
+      ? { backend: values["tts-backend"] }
+      : {}),
+  };
+  const speech = speechLifecycle({
     runtimeDir: join(dirname(process.execPath), "runtime/speech"),
-    overrides: {
-      ...(values.tts !== undefined ? { mode: values.tts } : {}),
-      ...(values.model !== undefined ? { model: values.model } : {}),
-      ...(values["tts-port"] !== undefined
-        ? { ttsPort: Number(values["tts-port"]) }
-        : {}),
-      ...(values["tts-backend"] !== undefined
-        ? { backend: values["tts-backend"] }
-        : {}),
-    },
+    overrides: ttsOverrides,
   });
-  await runtime.acquire();
   await startBridge({
-    credits: credits(
-      readAsset("credits/TRPG-Voice-Bridge-LICENSE").toString("utf8"),
-      readAsset("credits/speech.cpp-LICENSE").toString("utf8"),
-      JSON.parse(readAsset("build-info.json")).speech.speech,
-    ),
-    runtime,
-    onClose: () => runtime.close(),
-    providerOptions: {
-      resolveProvider: (saved) => runtime.provider(saved),
-      fetchImpl: runtime.fetch,
+    startup,
+    prepare: speech.prepare,
+    boot: async (active, prepared) => {
+      const runtime = await speech.open(active, prepared);
+      return {
+        credits: bridgeCredits,
+        runtime,
+        onClose: () => runtime.close(),
+        providerOptions: {
+          resolveProvider: (saved) => runtime.provider(saved),
+          fetchImpl: runtime.fetch,
+        },
+        initial: loadDefaults(),
+        loadDefaults,
+        extensions: [createExtension],
+        localOrigin:
+          process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${active.port}`,
+      };
     },
-    port,
-    host: process.env.TTS_BRIDGE_HOST ?? "127.0.0.1",
-    dataDir,
-    initial,
-    loadDefaults,
-    extensions: [createExtension],
-    localOrigin: process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${port}`,
-    publicOrigin: process.env.TTS_PUBLIC_ORIGIN ?? "",
-    onListening: async (app) => {
+    onListening: async (app, { restarted }) => {
+      const runtime = speech.runtime;
       void runtime
         .start()
         .catch(() => runtime.fail("内蔵TTSを開始できませんでした"));
-      console.log(`Bridge ready: http://127.0.0.1:${port}/`);
-      let manual = values["no-browser"];
+      console.log(`Bridge ready: http://127.0.0.1:${startup.active.port}/`);
+      // After a restart the admin page moves to the new address itself.
+      let manual = values["no-browser"] || restarted;
       if (!manual) {
         try {
           await openBrowser(app.adminUrl());
@@ -163,7 +176,7 @@ async function main() {
           console.log(
             `管理用リンク（共有しないでください）: ${app.adminUrl()}`,
           );
-        else
+        else if (!restarted)
           console.log(
             "管理用リンクを表示するには端末から --no-browser で起動してください。",
           );

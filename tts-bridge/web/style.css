@@ -301,6 +301,11 @@ th {
   margin: -8px 0 10px;
   overflow-wrap: anywhere;
 }
+/* 起動設定に出る保存先などの長いパス */
+#startupFile,
+#startupError {
+  overflow-wrap: anywhere;
+}
 
 /* 追加するスタイル: 手順ごとの折りたたみ */
 details.step {

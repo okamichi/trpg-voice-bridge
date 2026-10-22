@@ -18,7 +18,7 @@ Windows: trpg-voice-bridge.exe
  macOS: ~/Library/Application Support/TRPG-Voice-Bridge/data/
  Windows: %LOCALAPPDATA%\TRPG-Voice-Bridge\data\
 
-設定や声などの保存先は、起動時に `--data-dir` で指定できます。卓ごとに分けるといいでしょう。
+設定や声などの保存先は、管理画面の「0 起動設定」か、起動時の `--data-dir` で指定できます。卓ごとに分けるといいでしょう。
 指定したフォルダがなければ、起動時に自動で作られます。
 
 ```
@@ -31,9 +31,20 @@ Windows: trpg-voice-bridge.exe
 
 デフォルトではローカルアドレス 127.0.0.1 のポート番号 8090 で起動します。
 
+■ 起動設定（管理画面の「0 起動設定」）
+
+保存先・待ち受けアドレス・ポート・公開Originは、管理画面の「0 起動設定」で変えられます。
+「保存して再起動」を押すとBridgeが再起動して反映し、管理画面も開き直されます。設定は次に起動したときも使われます。
+「設定初期化」を押すと既定値に戻して再起動します。保存先の中のデータは削除しません。
+起動設定は次のファイルに保存されます。
+ macOS: ~/Library/Application Support/TRPG-Voice-Bridge/startup.json
+ Windows: %LOCALAPPDATA%\TRPG-Voice-Bridge\startup.json
+起動オプション（--data-dir、--port）や環境変数で指定した項目は、そちらが優先され、「0 起動設定」では変更できません。
+
 生成音声を Discord Bot から発声させる場合は、あなたが卓の参加者全員分の声の設定を行う（あるいは後述の「チャットによる声登録」機能を利用する）ことで、このサーバをインターネットに公開しないようにすることもできます。
 
-参加者にインターネットからサーバにアクセスさせるには、たとえば次のように起動します。
+参加者にインターネットからサーバにアクセスさせるには、「0 起動設定」で待ち受けアドレスを 0.0.0.0 に、公開Originを参加者が開くURL（例：http://203.0.113.10:8090）にして「保存して再起動」を押します。
+環境変数で指定する場合は、たとえば次のように起動します。
 
 ```
 ## 例えばグローバルアドレスが203.0.113.10で、ルータなどで8090番をNATさせる場合
@@ -58,10 +69,10 @@ $env:TTS_BRIDGE_HOST = "0.0.0.0"; $env:TTS_PUBLIC_ORIGIN = "http://203.0.113.10:
   --no-browser         管理画面を手動で開く
   --self-test          SQLite・Discord依存・PCM→Opus変換の診断（通信しません）
 
-・runtime.jsonに起動方式・モデルパス・TTSポートを保存します。起動オプションでの指定は保存値を上書きしません。
+・runtime.jsonに起動方式・モデルパス・TTSポートを保存します。保存したら、表示される「Bridgeを再起動」で反映できます。起動オプションでの指定は保存値を上書きしません。
 ・内蔵TTSは127.0.0.1だけで待ち受け、参照音声はdata-dirのvoices/へ保存します。
 ・バックアップ・移行はBridge終了後にdata-dir全体をコピーしてください。モデルは移動先で別途指定します。
-・TTS_DATA_DIR / TTS_BRIDGE_PORT / TTS_CONFIG_FILE 等の環境変数も利用できます。
+・TTS_DATA_DIR / TTS_BRIDGE_PORT / TTS_CONFIG_FILE / TTS_STARTUP_FILE 等の環境変数も利用できます。
 
 ■ チャットのないVTTで使う（Player / Chatter）
 

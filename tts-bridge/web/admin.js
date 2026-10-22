@@ -12,10 +12,14 @@ const $ = (id) => document.getElementById(id);
 let stepsInitialized = false,
   previousPending = 0,
   refreshTimer,
-  shuttingDown = false;
+  shuttingDown = false,
+  canRestart = false,
+  startup;
+// The startup settings keep their fixed 0, so the other steps keep the
+// numbers the guides refer to.
 function numberSteps() {
   document
-    .querySelectorAll("details.step:not([hidden]) .step-num")
+    .querySelectorAll("details.step:not([hidden]):not(#stepStartup) .step-num")
     .forEach((el, i) => {
       el.textContent = i + 1;
     });
@@ -119,7 +123,15 @@ async function refresh() {
     `読み上げ${d.accepting ? "中" : "停止中"} ／ 参加者 ${d.players.length} 接続`,
     d.accepting ? "ok" : "",
   );
-  $("restartNotice").hidden = !(d.runtime?.restartRequired && d.canShutdown);
+  canRestart = Boolean(d.canRestart);
+  $("restartNotice").hidden = !(
+    d.runtime?.restartRequired &&
+    (d.canRestart || d.canShutdown)
+  );
+  $("restartNoticeRestart").hidden = !d.canRestart;
+  $("runtimeRestart").hidden = !d.canRestart;
+  $("restartNoticeShutdown").hidden = !!d.canRestart;
+  $("restartNotice").querySelector("[data-shutdown]").hidden = !!d.canRestart;
   $("shutdownSection").hidden = !d.canShutdown;
   $("shutdownNote").hidden = !d.runtime || !d.canShutdown;
   if (d.runtime) {
@@ -430,8 +442,163 @@ $("releaseCollector").onclick = () =>
     await command("release-collector");
     await refresh();
   });
+const startupFields = {
+  dataDir: "startupDataDir",
+  host: "startupHost",
+  port: "startupPort",
+  publicOrigin: "startupPublicOrigin",
+};
+const lockNote = (name) =>
+  `${name.startsWith("--") ? `起動オプション ${name}` : `環境変数 ${name}`}で指定中のため、ここでは変更できません。`;
+function renderStartup() {
+  const { saved, active, defaults, locks, file, lastRestart } = startup;
+  const shown = saved ?? { ...defaults, dataDir: "" };
+  for (const [field, id] of Object.entries(startupFields)) {
+    const value = locks[field] ? active[field] : shown[field];
+    if (field === "host" && ![...$(id).options].some((o) => o.value === value))
+      $(id).append(new Option(value, value));
+    $(id).value = value;
+    $(id).disabled = Boolean(locks[field]);
+  }
+  $("startupDataDir").placeholder = defaults.dataDir;
+  const notes = {
+    dataDir: `空欄なら既定の保存先（${defaults.dataDir}）を使います。`,
+    host: "ほかのPCの参加者がPlayer・Chatterを使うときは、0.0.0.0にして公開Originも指定します。",
+    port: `既定は${defaults.port}です。変えたときは、Collectorの「Bridge URL」も変えてください。`,
+    publicOrigin:
+      "参加者がブラウザで開くURLの http://アドレス:ポート の部分です。空欄なら公開しません。",
+  };
+  for (const [field, id] of Object.entries(startupFields))
+    $(`${id}Note`).textContent = locks[field]
+      ? lockNote(locks[field])
+      : notes[field];
+  $("startupFile").textContent = `設定ファイル: ${file}`;
+  $("startupError").textContent = lastRestart?.error ?? "";
+  $("startupError").hidden = !lastRestart;
+  setState(
+    $("startupState"),
+    `${active.host}:${active.port}`,
+    lastRestart ? "warn" : "",
+  );
+}
+// The fields a request sends; locked ones stay out.
+function startupInput(values) {
+  return Object.fromEntries(
+    Object.keys(startupFields)
+      .filter((field) => !startup.locks[field])
+      .map((field) => [field, values(field)]),
+  );
+}
+function restartWarnings(input) {
+  const { active, defaults } = startup;
+  const lines = [
+    "参加者・Collector・Chatterの接続が切れます。参加URLを再発行して渡し直し、Collectorは拡張から接続し直してください。",
+  ];
+  if (
+    "dataDir" in input &&
+    (input.dataDir || defaults.dataDir) !== active.dataDir
+  )
+    lines.push(
+      "保存先を変えると、その保存先のキャラ・声・Collectorの承認・Discordの設定に切り替わります。今の保存先のデータは移動も削除もしません。",
+    );
+  if ("port" in input && input.port !== active.port)
+    lines.push(
+      "ポートを変えると、管理画面とPlayerのURLが変わります。Collectorの「Bridge URL」も変えてください。",
+    );
+  return lines.map((line) => `・${line}`).join("\n");
+}
+// The page asks its own origin for the result; after a port change the old
+// address answers until the admin page moves to the new one.
+async function restartBridge(request) {
+  const { restartId } = await request();
+  shuttingDown = true;
+  clearInterval(refreshTimer);
+  clearTimeout(modelTimer);
+  for (const el of document.querySelectorAll(
+    "main button, main input, main select",
+  ))
+    el.disabled = true;
+  $("notice").textContent = "Bridgeを再起動しています…";
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    let result;
+    try {
+      const r = await fetch("/api/v1/restart-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: restartId }),
+      });
+      if (!r.ok) continue;
+      result = await r.json();
+    } catch {
+      continue;
+    }
+    if (result.state === "restarting") continue;
+    const target = new URL(result.adminUrl);
+    target.hash += "&restarted=1";
+    if (
+      target.origin === location.origin &&
+      target.pathname === location.pathname
+    ) {
+      history.replaceState(null, "", target.href);
+      location.reload();
+    } else location.replace(target.href);
+    return;
+  }
+  $("notice").textContent =
+    "再起動を確認できませんでした。Bridgeを起動した端末の表示を確認してください。";
+}
+async function mountStartup(restarted) {
+  startup = await api("startup");
+  $("stepTts").before($("startupTemplate").content.cloneNode(true));
+  renderStartup();
+  $("stepStartup").open = Boolean(restarted && startup.lastRestart);
+  $("startupForm").onsubmit = (event) => {
+    event.preventDefault();
+    run(async () => {
+      const input = startupInput((field) =>
+        field === "port"
+          ? Number($(startupFields[field]).value)
+          : $(startupFields[field]).value.trim(),
+      );
+      if (
+        !confirm(
+          `起動設定を保存し、Bridgeを再起動します。\n${restartWarnings(input)}`,
+        )
+      )
+        return;
+      await restartBridge(() => api("startup", "PUT", input));
+    });
+  };
+  $("startupReset").onclick = () =>
+    run(async () => {
+      const input = startupInput((field) =>
+        field === "dataDir" ? "" : startup.defaults[field],
+      );
+      if (
+        !confirm(
+          `起動設定を既定値に戻し、Bridgeを再起動します。保存先の中のデータは削除しません。\n${restartWarnings(input)}`,
+        )
+      )
+        return;
+      await restartBridge(() => api("startup", "DELETE"));
+    });
+}
+$("runtimeRestart").onclick = () =>
+  run(async () => {
+    if (
+      !confirm(
+        `Bridgeを再起動して、TTSの起動設定を反映します。\n${restartWarnings({})}`,
+      )
+    )
+      return;
+    await restartBridge(() => api("restart", "POST", {}));
+  });
 await run(async () => {
-  const access = new URLSearchParams(location.hash.slice(1)).get("access");
+  const params = new URLSearchParams(location.hash.slice(1));
+  const access = params.get("access"),
+    restarted = params.has("restarted");
   history.replaceState(null, "", location.pathname);
   if (access) {
     const r = await fetch("/api/v1/admin-login", {
@@ -457,6 +624,12 @@ await run(async () => {
   $("sentencePause").value = sentencePauseMs / 1000;
   $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
   await refresh();
+  if (canRestart) {
+    await mountStartup(restarted);
+    if (restarted)
+      $("notice").textContent =
+        startup.lastRestart?.error ?? "Bridgeを再起動しました。";
+  }
   refreshTimer = setInterval(() => {
     if (!shuttingDown) void run(refresh);
   }, 5000);

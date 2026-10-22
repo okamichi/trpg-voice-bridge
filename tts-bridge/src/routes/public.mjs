@@ -8,8 +8,15 @@ import { json, body, equal } from "../http-util.mjs";
 export async function publicRoutes(ctx, req, res, url) {
   const path = url.pathname,
     method = req.method;
-  const { store, installedExtensions, download, pairings, bootAccess, origin } =
-    ctx;
+  const {
+    store,
+    installedExtensions,
+    download,
+    pairings,
+    bootAccess,
+    origin,
+    restartStatus,
+  } = ctx;
   if (path === "/healthz" && method === "GET")
     return json(res, 200, { status: "ok" });
   const extensionScript = path.match(/^\/web\/ext\/([a-z0-9-]+)\/admin\.js$/);
@@ -67,6 +74,14 @@ export async function publicRoutes(ctx, req, res, url) {
       `trpg_admin=${store.secrets.admin}; HttpOnly; SameSite=Strict; Path=/`,
     );
     return json(res, 200, { ok: true });
+  }
+  // The restart ID, handed only to the admin page, is the credential: the
+  // admin cookie changes with the data directory.
+  if (restartStatus && path === "/api/v1/restart-status" && method === "POST") {
+    origin(req, true);
+    const result = restartStatus((await body(req))?.id);
+    check(result, "再起動の情報がありません", 404);
+    return json(res, 200, result);
   }
   if (path === "/api/v1/pairings" && method === "POST") {
     check(

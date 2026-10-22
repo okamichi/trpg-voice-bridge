@@ -11,6 +11,15 @@ import { publicRoutes } from "./routes/public.mjs";
 import { adminRoutes } from "./routes/admin.mjs";
 import { participantRoutes } from "./routes/participant.mjs";
 import { collectorRoutes } from "./routes/collector.mjs";
+export function securityHeaders(res) {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
+  );
+}
 export function createApp({
   dataDir,
   profiles = {},
@@ -24,6 +33,9 @@ export function createApp({
   loadDefaults,
   extensions = [],
   chatterAssetReader = readAsset,
+  startupSettings,
+  onRestart,
+  restartStatus,
 } = {}) {
   const store = new Store(dataDir, initial ?? initialConfig(profiles)),
     engine = new Engine(store, providerOptions);
@@ -239,6 +251,16 @@ export function createApp({
   function changed(before) {
     engine.configChanged(before);
   }
+  async function restart(kind, input) {
+    try {
+      return await onRestart(kind, input);
+    } catch (e) {
+      throw new HttpError(
+        e.status ?? 400,
+        e.expose ? e.message : "再起動できませんでした",
+      );
+    }
+  }
   // Shared with the route modules. Origins and the invitation can change
   // after start-up, so routes read them through this object.
   const ctx = {
@@ -246,6 +268,10 @@ export function createApp({
     engine,
     runtime,
     onShutdown,
+    startupSettings,
+    onRestart,
+    restartStatus,
+    restart,
     credits,
     loadDefaults,
     publicOrigin,
@@ -279,13 +305,7 @@ export function createApp({
   };
   let closing = false;
   const server = createServer(async (req, res) => {
-    res.setHeader("Cache-Control", "private, no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Referrer-Policy", "no-referrer");
-    res.setHeader(
-      "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
-    );
+    securityHeaders(res);
     try {
       check(!closing, "アプリ終了中です", 503);
       check(hosts.has(req.headers.host), "許可されていないHostです", 403);
@@ -525,6 +545,9 @@ export function createApp({
   server.headersTimeout = 10000;
   return {
     adminUrl: () => `${localOrigin}/admin/#access=${bootAccess}`,
+    get localOrigin() {
+      return localOrigin;
+    },
     server,
     store,
     engine,

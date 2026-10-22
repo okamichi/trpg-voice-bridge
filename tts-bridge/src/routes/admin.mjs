@@ -22,6 +22,9 @@ export async function adminRoutes(ctx, req, res, url) {
     connections,
     runtime,
     onShutdown,
+    startupSettings,
+    onRestart,
+    restart,
     credits,
     loadDefaults,
     publicOrigin,
@@ -239,6 +242,16 @@ export async function adminRoutes(ctx, req, res, url) {
       } else check(method === "GET", "許可されていない操作です", 405);
       return json(res, 200, runtime.snapshot());
     }
+    if (startupSettings && path === "/api/v1/admin/startup") {
+      if (method === "GET") return json(res, 200, startupSettings());
+      if (onRestart && method === "PUT")
+        return json(res, 202, await restart("save", await body(req)));
+      if (onRestart && method === "DELETE")
+        return json(res, 202, await restart("reset"));
+      throw new HttpError(405, "許可されていない操作です");
+    }
+    if (onRestart && path === "/api/v1/admin/restart" && method === "POST")
+      return json(res, 202, await restart("restart"));
     if (onShutdown && path === "/api/v1/admin/shutdown" && method === "POST") {
       json(res, 200, { ok: true });
       setImmediate(() => onShutdown());
@@ -266,6 +279,7 @@ export async function adminRoutes(ctx, req, res, url) {
         ...engine.metadata(),
         ...(runtime ? { runtime: runtime.snapshot() } : {}),
         canShutdown: Boolean(onShutdown),
+        canRestart: Boolean(onRestart),
         accepting: engine.accepting,
         tts,
         degraded: engine.degraded,

@@ -34,6 +34,63 @@
       <p id="failure"></p>
       <button id="recover">Irodori側の処理終了を確認して復帰</button>
     </section>
+    <!-- Added by admin.js only when this Bridge can restart itself. -->
+    <template id="startupTemplate">
+      <details class="step" id="stepStartup">
+        <summary>
+          <span class="step-num">0</span><span class="step-title">起動設定</span
+          ><small>必要なら</small><span class="state" id="startupState"></span>
+        </summary>
+        <div class="step-body">
+          <div class="part">
+            <p>
+              Bridgeの保存先・待ち受け・公開Originを変えられます。「保存して再起動」を押すと、Bridgeを再起動して反映します。
+            </p>
+            <form id="startupForm">
+              <label
+                >保存先（データディレクトリ）<input
+                  id="startupDataDir"
+                  type="text"
+              /></label>
+              <small class="field-note" id="startupDataDirNote"></small>
+              <label
+                >待ち受けアドレス<select id="startupHost">
+                  <option value="127.0.0.1">
+                    127.0.0.1（このPCからだけ接続できる）
+                  </option>
+                  <option value="0.0.0.0">
+                    0.0.0.0（ほかのPCからも接続できる）
+                  </option>
+                </select></label
+              >
+              <small class="field-note" id="startupHostNote"></small>
+              <label
+                >ポート<input
+                  id="startupPort"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  required
+              /></label>
+              <small class="field-note" id="startupPortNote"></small>
+              <label
+                >公開Origin<input
+                  id="startupPublicOrigin"
+                  type="text"
+                  placeholder="例：http://203.0.113.10:8090"
+              /></label>
+              <small class="field-note" id="startupPublicOriginNote"></small>
+              <button>保存して再起動</button
+              ><button type="button" class="danger" id="startupReset">
+                設定初期化
+              </button>
+            </form>
+            <p class="error" id="startupError" hidden></p>
+            <p class="muted" id="startupFile"></p>
+          </div>
+        </div>
+      </details>
+    </template>
     <details class="step" id="stepTts">
       <summary>
         <span class="step-num"></span><span class="step-title">TTSの準備</span
@@ -44,7 +101,13 @@
           <h3>TTSの起動設定</h3>
           <p id="runtimeStatus"></p>
           <div class="callout" id="restartNotice" hidden>
-            <p>
+            <p id="restartNoticeRestart" hidden>
+              保存した設定を反映するには、Bridgeを再起動してください。
+            </p>
+            <button id="runtimeRestart" class="secondary" type="button" hidden>
+              Bridgeを再起動
+            </button>
+            <p id="restartNoticeShutdown">
               保存した設定を反映するには、Bridgeを終了してから起動し直してください。
             </p>
             <button data-shutdown class="secondary" type="button">

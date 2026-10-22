@@ -105,5 +105,18 @@ Playerは、通知の順に1件ずつ取得・デコード・再生します。�
 | `TTS_PUBLIC_ORIGIN` | なし                      | 参加URL・WebSocketのOrigin・Hostとして外から許可するもの（HTTPかHTTPS、末尾の `/` なし）    |
 | `TTS_CONFIG_FILE`   | `tts-bridge/config.json`  | 初期値のファイル                                                                            |
 | `TTS_DATA_DIR`      | `tts-bridge/data`         | 保存先                                                                                      |
+| `TTS_STARTUP_FILE`  | `tts-bridge/startup.json` | 管理画面「0 起動設定」の保存先                                                              |
+
+保存先・待ち受けアドレス・ポート・公開Originは、管理画面の「0 起動設定」でも変えられます。値は `startup.json` に保存され、優先順位は「起動オプション > 環境変数 > `startup.json` > 既定値」です。起動オプションや環境変数で指定した項目は、画面では変更できません。`TTS_LOCAL_ORIGIN` を指定するとポートも変更できなくなります。
+
+「保存して再起動」「設定初期化」「Bridgeを再起動」は、プロセスを終了せずにBridgeを閉じて、新しい設定で作り直します。再起動の前に、新しいポートが空いているか、保存先に書き込めるか、アプリでは新しい保存先を別のBridgeが使っていないかを確かめ、だめなら409を返して今のまま動き続けます。新しい設定で起動できなかった場合は、元の設定で起動し直し、`startup.json` は書き換えません。
+
+| API                            | 内容                                                                                                                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/admin/startup`    | 管理者専用。保存値・使用中の値・既定値・変更できない項目とその理由（`locks`）・設定ファイルのパス                                                                                   |
+| `PUT /api/v1/admin/startup`    | 管理者専用。`{dataDir, host, port, publicOrigin}` のうち変える項目を保存して再起動。`202 {restartId}`                                                                               |
+| `DELETE /api/v1/admin/startup` | 管理者専用。`startup.json` を削除し、既定値で再起動。`202 {restartId}`                                                                                                              |
+| `POST /api/v1/admin/restart`   | 管理者専用。今の起動設定のまま再起動（内蔵TTSの起動設定の反映に使う）。`202 {restartId}`                                                                                            |
+| `POST /api/v1/restart-status`  | `{id: restartId}`。管理用Originからのみ。`restarting`、`done`、`rolledBack` と、新しい管理用リンク `adminUrl` を返す。ポートを変えた場合は、元のポートでも120秒間この結果だけを返す |
 
 外部TTSのモデルや推論のバックエンドは、Bridgeからは変えません。
