@@ -56,6 +56,16 @@ test.beforeEach(async () => {
                   canSpeak: false,
                 },
               ],
+              textChannels: async () => [
+                {
+                  guildId: A,
+                  channelId: "33333333333333333",
+                  guildName: "TRPGサーバー",
+                  channelName: "ブリッジ声登録",
+                  canSend: true,
+                },
+              ],
+              cancelDesigns: () => calls.push("cancel-designs"),
               connect: async () => {
                 state = "connected";
                 calls.push("connect");
@@ -77,6 +87,38 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await app.close();
   rmSync(dir, { recursive: true, force: true });
+});
+test("Discord voice design is opt-in and saves a separate text destination without joining voice", async ({
+  page,
+}) => {
+  await page.goto(app.adminUrl());
+  const panel = page.locator("#extensions");
+  await panel.locator("details.step > summary").click();
+  await expect(
+    panel.getByLabel("登録コマンドで試聴フォームを開く"),
+  ).not.toBeChecked();
+  await panel.getByLabel("Discord Botに接続する").check();
+  await panel.getByLabel("Botトークン").fill("test-token");
+  await panel.getByRole("button", { name: "保存してログイン" }).click();
+  await expect(
+    panel.getByLabel("専用テキストチャンネル").locator("option"),
+  ).toHaveCount(2);
+  await panel
+    .getByLabel("専用テキストチャンネル")
+    .selectOption(`${A}/33333333333333333`);
+  await panel.getByLabel("登録コマンドで試聴フォームを開く").check();
+  await panel.getByRole("button", { name: "試聴モードを保存" }).click();
+  await expect(panel.locator("[data-id=notice]")).toHaveText("完了しました");
+  expect(calls).toContain("cancel-designs");
+  expect(calls).not.toContain("connect");
+  await page.reload();
+  await panel.locator("details.step > summary").click();
+  await expect(
+    panel.getByLabel("登録コマンドで試聴フォームを開く"),
+  ).toBeChecked();
+  await expect(panel.getByLabel("専用テキストチャンネル")).toHaveValue(
+    `${A}/33333333333333333`,
+  );
 });
 test("admin can configure, connect, preview and delete token without exposing it", async ({
   page,

@@ -51,6 +51,7 @@ export function createExtension({
     autoConnect: false,
     greeting: { ...defaultGreeting },
     hashes: {},
+    design: { enabled: false, guildId: "", channelId: "" },
   };
   let error = "",
     bot,
@@ -67,6 +68,7 @@ export function createExtension({
       ...settings,
       ...saved,
       greeting: { ...defaultGreeting, ...saved.greeting },
+      design: { enabled: false, guildId: "", channelId: "", ...saved.design },
     };
     if (
       typeof settings.token !== "string" ||
@@ -89,6 +91,19 @@ export function createExtension({
   const cache = new Map(),
     pending = new Map(),
     failures = new Map();
+  // Keep this hook installed even while disconnected: an opted-in command must
+  // fail visibly rather than silently falling back to immediate registration.
+  const designer = {
+    enabled: () => settings.design.enabled,
+    run: (task, valid) => {
+      check(
+        settings.enabled && bot?.designVoice,
+        "Discord Botにログインしてください",
+      );
+      return bot.designVoice(task, valid);
+    },
+  };
+  if (engine.chatVoices) engine.chatVoices.designer = designer;
   function descriptor(kind, notify = true) {
     const text =
       settings.greeting[kind === "enter" ? "enterText" : "leaveText"];
@@ -206,6 +221,7 @@ export function createExtension({
         token: settings.token,
         greeting,
         onError: report,
+        designSettings: () => settings.design,
       });
       if (closed) {
         await created.close();
@@ -253,6 +269,8 @@ export function createExtension({
       botName: bot?.status().botName ?? "",
       inviteUrl: bot?.status().inviteUrl ?? "",
       channels,
+      textChannels: (await bot?.textChannels?.()) ?? [],
+      design: { ...settings.design },
       guildId: settings.guildId,
       channelId: settings.channelId,
       autoConnect: settings.autoConnect,
@@ -326,6 +344,36 @@ export function createExtension({
           }
         }
       }
+    } else if (method === "PUT" && path === "design") {
+      check(b && typeof b.enabled === "boolean", "試聴モードの設定が不正です");
+      const available = (await bot?.textChannels?.()) ?? [];
+      check(
+        !b.enabled ||
+          available.some(
+            (c) =>
+              c.guildId === b.guildId &&
+              c.channelId === b.channelId &&
+              c.canSend,
+          ),
+        "投稿・添付できるテキストチャンネルを選んでください",
+      );
+      const previous = settings;
+      settings = {
+        ...settings,
+        design: {
+          enabled: b.enabled,
+          guildId: b.enabled ? b.guildId : settings.design.guildId,
+          channelId: b.enabled ? b.channelId : settings.design.channelId,
+        },
+      };
+      try {
+        save();
+      } catch {
+        settings = previous;
+        fail("設定を保存できません", 500);
+      }
+      bot?.cancelDesigns?.();
+      error = "";
     } else if (method === "PUT" && path === "greeting") {
       check(b && typeof b === "object", "メッセージ設定が必要です");
       for (const key of ["enterText", "leaveText"])
@@ -406,6 +454,8 @@ export function createExtension({
             }
           }),
     close: async () => {
+      if (engine.chatVoices?.designer === designer)
+        engine.chatVoices.designer = null;
       // During shutdown only the already-cached farewell remains available.
       const active = bot;
       bot = undefined;

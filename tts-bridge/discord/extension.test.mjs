@@ -41,6 +41,11 @@ function setup(t, extra = {}) {
         { guildId: B, channelId: B, canSpeak: true },
         { guildId: A, channelId: B, canSpeak: false },
       ],
+      textChannels: async () => [
+        { guildId: A, channelId: B, canSend: true },
+        { guildId: B, channelId: A, canSend: false },
+      ],
+      cancelDesigns: () => calls.push(["cancel-designs"]),
       status: () => ({
         state,
         botName: "Bot",
@@ -85,6 +90,35 @@ function setup(t, extra = {}) {
     bots,
   };
 }
+test("voice design is opt-in, validates text permissions and persists independently of voice connection", async (t) => {
+  const f = setup(t);
+  assert.equal((await f.request("status")).data.design.enabled, false);
+  await f.request("settings", "PUT", { enabled: true, token: "private-token" });
+  await assert.rejects(
+    f.request("design", "PUT", { enabled: true, guildId: B, channelId: A }),
+    /テキストチャンネル/,
+  );
+  const result = await f.request("design", "PUT", {
+    enabled: true,
+    guildId: A,
+    channelId: B,
+  });
+  assert.deepEqual(result.data.design, {
+    enabled: true,
+    guildId: A,
+    channelId: B,
+  });
+  assert.deepEqual(f.bots[0].options.designSettings(), result.data.design);
+  assert.equal(
+    f.calls.some((c) => c[0] === "connect"),
+    false,
+  );
+  assert.equal(f.saved().design.channelId, B);
+  assert.doesNotMatch(JSON.stringify(result), /private-token/);
+  await f.request("design", "PUT", { enabled: false });
+  assert.equal(f.saved().design.enabled, false);
+  assert.equal(f.calls.filter((c) => c[0] === "cancel-designs").length, 2);
+});
 test("settings persist privately, token never returned, toggle and reconnect honor saved intent", async (t) => {
   const f = setup(t);
   let result = await f.request("settings", "PUT", {

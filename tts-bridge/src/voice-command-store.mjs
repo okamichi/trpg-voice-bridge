@@ -1,6 +1,6 @@
 import { check } from "./contracts.mjs";
 
-const active = new Set(["queued", "generating", "registering"]);
+const active = new Set(["queued", "generating", "designing", "registering"]);
 
 // Command state is separate from editable character settings and their comparisons.
 export class VoiceCommandStore {

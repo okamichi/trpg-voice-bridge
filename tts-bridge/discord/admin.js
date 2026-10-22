@@ -29,7 +29,7 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
         <li><strong>Botを招待する</strong>
           <ul>
             <li>「General Information」の「Application ID」を、次のURLの <code>&lt;Application ID&gt;</code> に入れて開く。
-              <pre><code>https://discord.com/oauth2/authorize?client_id=&lt;Application ID&gt;&amp;scope=bot&amp;permissions=3146752</code></pre>
+              <pre><code>https://discord.com/oauth2/authorize?client_id=&lt;Application ID&gt;&amp;scope=bot&amp;permissions=3247104</code></pre>
             </li>
             <li>開いた画面で対象のサーバーを選び、「認証」を押す。</li>
           </ul>
@@ -47,6 +47,14 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
     <p data-id="botName"></p><button data-id="invite">招待URLをコピー</button>
     <label>ボイスチャンネル<select data-id="channel"></select></label>
     <button data-id="connect">接続</button><button data-id="disconnect">切断</button>
+    <fieldset><legend>VTTチャットからDiscordで声をデザイン</legend>
+    <label><input data-id="designEnabled" type="checkbox">登録コマンドで試聴フォームを開く</label>
+    <label>専用テキストチャンネル<select data-id="designChannel"></select></label>
+    <p>既定は従来の即時登録です。「声と読み上げの調整」設定内の「チャットによる声登録」と併用することで、Player/Chatterを使わずに、このDiscordのテキストチャンネルで声のデザインと登録を行うことができます。</p>
+    <p>指定チャンネルの参加者が共同編集できます。音声と設定はチャンネル閲覧者に公開されます。本人限定ではありません。</p>
+    <p>Botにはチャンネルの閲覧・送信・ファイル添付・履歴閲覧を許可してください。Developer PortalのInteractions Endpoint URLは空欄にします。</p>
+    <button data-id="saveDesign">試聴モードを保存</button>
+    </fieldset>
     <fieldset><legend>入室・退出メッセージ</legend>
     <label>入室メッセージ<input data-id="enter" type="text"></label>
     <label>退出メッセージ<input data-id="leave" type="text"></label>
@@ -112,6 +120,33 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
       $("leave").value = s.greeting.leaveText;
       selectGreetingVoice(s.greeting.voiceProfileId);
     }
+    if (!initialized || settings === "design") {
+      $("designEnabled").checked = s.design?.enabled ?? false;
+    }
+    const designSelected =
+      !initialized || settings === "design"
+        ? s.design?.channelId
+          ? channelKey(s.design)
+          : ""
+        : $("designChannel").value;
+    const designOptions = [new Option("チャンネルを選んでください", "")];
+    for (const c of s.textChannels ?? []) {
+      const option = new Option(
+        `${c.guildName} / ${c.channelName}${c.canSend ? "" : "（権限がありません）"}`,
+        channelKey(c),
+      );
+      option.disabled = !c.canSend;
+      designOptions.push(option);
+    }
+    if (
+      designSelected &&
+      !designOptions.some((o) => o.value === designSelected)
+    )
+      designOptions.push(
+        new Option("保存済みのチャンネル（未取得）", designSelected),
+      );
+    $("designChannel").replaceChildren(...designOptions);
+    $("designChannel").value = designSelected;
     renderGreetingStatus();
     const selected = channelKey(s);
     const options = [new Option("チャンネルを選んでください", "")];
@@ -282,6 +317,18 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
         "greeting",
       ),
     );
+  $("saveDesign").onclick = () =>
+    run(async () => {
+      const [guildId, channelId] = $("designChannel").value.split("/");
+      render(
+        await api("design", "PUT", {
+          enabled: $("designEnabled").checked,
+          guildId,
+          channelId,
+        }),
+        "design",
+      );
+    });
   for (const [button, text] of [
     ["previewEnter", "enter"],
     ["previewLeave", "leave"],
