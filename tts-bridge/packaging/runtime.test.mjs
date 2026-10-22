@@ -446,17 +446,15 @@ test(
         },
       }),
       prepare: speech.prepare,
-      boot: async (active, prepared) => {
-        const runtime = await speech.open(active, prepared);
-        const initial = initialConfig({});
-        initial.provider.type = "mock";
-        return {
-          initial,
-          runtime,
-          onClose: () => runtime.close(),
-          localOrigin: `http://127.0.0.1:${active.port}`,
-        };
-      },
+      boot: (active, prepared) =>
+        speech.boot(active, prepared, () => {
+          const initial = initialConfig({});
+          initial.provider.type = "mock";
+          return {
+            initial,
+            localOrigin: `http://127.0.0.1:${active.port}`,
+          };
+        }),
     });
     const admin = async (path, method, body) => {
       const response = await fetch(
@@ -525,6 +523,55 @@ test(
     } finally {
       await other?.close();
       await handle.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "failed speech boot releases both newly acquired and prepared data-directory locks",
+  {
+    skip: !existsSync(
+      join(
+        runtimeDir,
+        process.platform === "win32"
+          ? "bridge-supervisor.exe"
+          : "bridge-supervisor",
+      ),
+    ),
+  },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-boot-failure-"));
+    const speech = speechLifecycle({ runtimeDir });
+    try {
+      for (const preflight of [false, true]) {
+        const active = {
+          dataDir: join(dir, preflight ? "prepared" : "direct"),
+        };
+        const prepared = preflight
+          ? await speech.prepare(active, { dataDir: join(dir, "previous") })
+          : undefined;
+        const failure = new Error("options construction failed");
+        await assert.rejects(
+          speech.boot(active, prepared, async () => {
+            throw failure;
+          }),
+          (error) => error === failure,
+        );
+        assert.equal(speech.runtime.status, "stopped");
+        // Verify the real supervisor's lock, not just the close method call.
+        const replacement = new SpeechRuntime({
+          dataDir: active.dataDir,
+          runtimeDir,
+        });
+        try {
+          await replacement.acquire();
+        } finally {
+          await replacement.close();
+        }
+      }
+    } finally {
+      await speech.runtime?.close();
       rmSync(dir, { recursive: true, force: true });
     }
   },

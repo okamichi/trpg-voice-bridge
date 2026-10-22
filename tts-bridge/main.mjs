@@ -37,11 +37,10 @@ try {
   });
   await startBridge({
     startup,
+    loadDefaults,
     boot: (active) => ({
       credits: bridgeCredits,
       extensions,
-      initial: loadDefaults(),
-      loadDefaults,
       localOrigin:
         process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${active.port}`,
     }),

@@ -138,24 +138,19 @@ async function main() {
   });
   await startBridge({
     startup,
+    loadDefaults,
     prepare: speech.prepare,
-    boot: async (active, prepared) => {
-      const runtime = await speech.open(active, prepared);
-      return {
+    boot: (active, prepared) =>
+      speech.boot(active, prepared, (runtime) => ({
         credits: bridgeCredits,
-        runtime,
-        onClose: () => runtime.close(),
         providerOptions: {
           resolveProvider: (saved) => runtime.provider(saved),
           fetchImpl: runtime.fetch,
         },
-        initial: loadDefaults(),
-        loadDefaults,
         extensions: [createExtension],
         localOrigin:
           process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${active.port}`,
-      };
-    },
+      })),
     onListening: async (app, { restarted }) => {
       const runtime = speech.runtime;
       void runtime

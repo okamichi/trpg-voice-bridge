@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -17,7 +23,7 @@ async function unusedPort() {
   return port;
 }
 
-async function setup(t, { env = {}, fail, prepare } = {}) {
+async function setup(t, { env = {}, fail, prepare, loadDefaults } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "bridge-restart-"));
   const port = await unusedPort();
   const startup = new StartupSettings({
@@ -34,6 +40,7 @@ async function setup(t, { env = {}, fail, prepare } = {}) {
   const handle = await startBridge({
     startup,
     prepare,
+    loadDefaults,
     boot: (active) => {
       boots.push(active);
       if (fail?.(active)) throw Error("boot failed");
@@ -243,4 +250,90 @@ test("repeated restarts keep one set of signal handlers", async (t) => {
   assert.equal(process.listenerCount("SIGINT"), listeners);
   const diagnostics = await admin(handle, "diagnostics");
   assert.equal(diagnostics.data.canRestart, true);
+});
+
+test("invalid defaults refuse restart before stopping Bridge; repaired defaults are read only in preflight", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "restart-defaults-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "config.json");
+  const initial = initialConfig({});
+  initial.provider.type = "mock";
+  writeFileSync(file, JSON.stringify(initial));
+  let reads = 0,
+    preparations = 0;
+  const { handle, boots, startup } = await setup(t, {
+    loadDefaults: () => {
+      reads++;
+      return JSON.parse(readFileSync(file, "utf8"));
+    },
+    prepare: () => {
+      preparations++;
+      // The file can change after preflight. Launch must use its snapshot.
+      writeFileSync(file, "{");
+    },
+  });
+  const before = handle.app;
+  for (const content of ["{ private-config-content", "{}", null]) {
+    if (content === null) rmSync(file);
+    else writeFileSync(file, content);
+    const response = await admin(handle, "restart", "POST", {});
+    assert.equal(response.status, 400);
+    assert.match(response.data.error, /設定ファイルを読み込めません/);
+    assert.doesNotMatch(response.data.error, /private-config-content/);
+    assert.equal(handle.app, before);
+    assert.equal(boots.length, 1);
+    assert.equal(preparations, 0);
+    assert.equal(startup.saved, null);
+    assert.equal((await admin(handle, "config")).status, 200);
+    assert.equal((await fetch(`${before.localOrigin}/healthz`)).status, 200);
+  }
+  writeFileSync(file, JSON.stringify(initial));
+  const { status, data } = await admin(handle, "restart", "POST", {});
+  assert.equal(status, 202);
+  assert.equal(
+    (await result(before.localOrigin, data.restartId)).state,
+    "done",
+  );
+  assert.equal(reads, 5);
+  assert.equal(preparations, 1);
+  assert.notEqual(handle.app, before);
+});
+
+test("rollback uses the previous defaults even if the file changes after preflight", async (t) => {
+  let reads = 0;
+  const original = initialConfig({});
+  original.provider.type = "mock";
+  const changed = structuredClone(original);
+  changed.roomId = "next-room";
+  const next = await unusedPort();
+  const { handle, port } = await setup(t, {
+    loadDefaults: () => {
+      reads++;
+      if (reads > 2) throw Error("defaults no longer readable");
+      return reads === 1 ? original : changed;
+    },
+    fail: (active) => active.port === next,
+  });
+  const { data } = await admin(handle, "startup", "PUT", { port: next });
+  assert.equal(
+    (await result(`http://127.0.0.1:${port}`, data.restartId)).state,
+    "rolledBack",
+  );
+  assert.equal(reads, 2);
+  assert.deepEqual(handle.app.store.defaults, original);
+});
+
+test("invalid defaults on first launch never acquire runtime resources", async () => {
+  let booted = false;
+  await assert.rejects(
+    startBridge({
+      startup: { active: {} },
+      loadDefaults: () => JSON.parse("{"),
+      boot: () => {
+        booted = true;
+      },
+    }),
+    /設定ファイルを読み込めません/,
+  );
+  assert.equal(booted, false);
 });

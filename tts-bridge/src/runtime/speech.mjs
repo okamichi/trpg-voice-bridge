@@ -288,7 +288,19 @@ export function speechLifecycle(options) {
           throw Object.assign(e, { status: e.status ?? 409 });
         });
     },
-    open: async (active, prepared) =>
-      (runtime = prepared ?? (await open(active.dataDir))),
+    // Until options reach the launcher, this hook owns cleanup on failure.
+    boot: async (active, prepared, options) => {
+      const created = (runtime = prepared ?? (await open(active.dataDir)));
+      try {
+        return {
+          ...(await options(created)),
+          runtime: created,
+          onClose: () => created.close(),
+        };
+      } catch (error) {
+        await created.close();
+        throw error;
+      }
+    },
   };
 }

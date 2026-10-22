@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createApp, securityHeaders } from "../http.mjs";
 import { exposed } from "./settings.mjs";
 import { checkDataDir, probePort } from "./startup.mjs";
+import { configSchema } from "../contracts.mjs";
 
 // How long a restart's result stays readable for the admin page.
 const RESULT_TTL = 120000;
@@ -20,12 +21,34 @@ const reason = (error) =>
 // Runs Bridge and restarts it inside this process, so a terminal, npm and
 // Ctrl+C stay attached. boot(active, prepared) returns createApp options plus
 // onClose for every start; dataDir and publicOrigin come from the settings.
-export async function startBridge({ startup, boot, prepare, onListening }) {
+// Defaults are validated before resource acquisition or stopping the old app.
+// Keep that snapshot for launch and the previous snapshot for rollback.
+export async function startBridge({
+  startup,
+  boot,
+  prepare,
+  loadDefaults,
+  onListening,
+}) {
   let current, pending, restarting, closing, status;
   const relays = new Set();
 
-  async function launch(active, prepared) {
-    const options = await boot(active, prepared);
+  async function readDefaults() {
+    if (!loadDefaults) return undefined;
+    try {
+      return structuredClone(configSchema(await loadDefaults()));
+    } catch {
+      throw exposed(
+        "設定ファイルを読み込めません。内容と読み取り権限を確認してください",
+      );
+    }
+  }
+
+  async function launch(active, prepared, initial) {
+    const options = {
+      ...(await boot(active, prepared)),
+      ...(loadDefaults ? { initial, loadDefaults } : {}),
+    };
     let app;
     try {
       app = createApp({
@@ -102,8 +125,9 @@ export async function startBridge({ startup, boot, prepare, onListening }) {
     if (pending || closing) throw busy("Bridgeは再起動中です");
     const plan = startup.plan(kind, input);
     pending = true;
-    let prepared;
+    let prepared, initial;
     try {
+      initial = await readDefaults();
       // A page asking again has already moved, and the old port may be wanted.
       await Promise.all([...relays].map((relay) => relay.close()));
       const previous = current.active;
@@ -121,7 +145,7 @@ export async function startBridge({ startup, boot, prepare, onListening }) {
     status = { id: randomBytes(32).toString("hex") };
     const entry = status;
     restarting = new Promise((resolve) => setImmediate(resolve))
-      .then(() => restart(plan, prepared, entry))
+      .then(() => restart(plan, prepared, entry, initial))
       .catch((error) => {
         console.error(`Bridgeを起動し直せませんでした。${reason(error)}。`);
         process.exitCode = 1;
@@ -134,7 +158,7 @@ export async function startBridge({ startup, boot, prepare, onListening }) {
     return { restartId: entry.id };
   }
 
-  async function restart(plan, prepared, entry) {
+  async function restart(plan, prepared, entry, initial) {
     const previous = current;
     current = undefined;
     await close(previous);
@@ -150,7 +174,7 @@ export async function startBridge({ startup, boot, prepare, onListening }) {
         : undefined;
     let result;
     try {
-      current = await launch(plan.active, prepared);
+      current = await launch(plan.active, prepared, initial);
       result = { state: "done" };
       try {
         startup.apply(plan);
@@ -166,7 +190,11 @@ export async function startBridge({ startup, boot, prepare, onListening }) {
         error: `新しい起動設定では起動できなかったため、元の設定で起動しました（${reason(e)}）`,
       };
       console.error(result.error);
-      current = await launch(previous.active);
+      current = await launch(
+        previous.active,
+        undefined,
+        previous.options.initial,
+      );
     }
     startup.lastRestart = result.error ? { error: result.error } : null;
     entry.result = { ...result, adminUrl: current.app.adminUrl() };
@@ -232,7 +260,8 @@ export async function startBridge({ startup, boot, prepare, onListening }) {
 
   for (const name of ["SIGINT", "SIGTERM"]) process.once(name, signal);
   try {
-    current = await launch(startup.active);
+    const initial = await readDefaults();
+    current = await launch(startup.active, undefined, initial);
     await onListening?.(current.app, { restarted: false });
   } catch (error) {
     for (const name of ["SIGINT", "SIGTERM"]) process.off(name, signal);

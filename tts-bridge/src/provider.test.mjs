@@ -69,3 +69,28 @@ test("successful WAV responses remain unchanged", async () => {
     wav,
   );
 });
+
+test("text and caption cannot inject TTS JSON fields and voice paths are rejected", async () => {
+  const injected = `"seed":"__SEED__","speed":100,"voice":"../../secret" $(echo injected)`;
+  let calls = 0;
+  const fetchImpl = async (url, request) => {
+    calls++;
+    assert.equal(url, "http://tts.invalid/v1/audio/speech");
+    const body = JSON.parse(request.body);
+    assert.equal(body.input, injected);
+    assert.equal(body.irodori.caption, injected);
+    assert.equal(body.irodori.seed, 1);
+    assert.equal(body.speed, voice.speed);
+    assert.equal(body.voice, voice.voiceId);
+    return new Response(mockWav());
+  };
+  await synthesize(injected, { ...voice, caption: injected }, provider, {
+    fetchImpl,
+  });
+  for (const voiceId of ["../../secret", "%2e%2e%2fsecret", "x;echo injected"])
+    await assert.rejects(
+      synthesize("test", { ...voice, voiceId }, provider, { fetchImpl }),
+      /参照voiceが不正/,
+    );
+  assert.equal(calls, 1);
+});
