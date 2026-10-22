@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
   renameSync,
+  readFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
@@ -22,7 +23,19 @@ import {
 } from "./contracts.mjs";
 import { synthesize, inspectWav, AUDIO_LIMIT } from "./provider.mjs";
 import { splitLongUtterance } from "./sentences.mjs";
+import {
+  AUDIO_FORMATS,
+  DEFAULT_AUDIO_FORMAT,
+  loadOpus,
+  encodeOggOpus,
+  downsampleWav,
+} from "./audio-format.mjs";
 export const DEFAULT_SENTENCE_PAUSE_MS = 900;
+export const RECOVERY_INTERVAL_MS = 10000;
+// A preview waits behind live lines, but not past this, so it still gets made.
+export const PREVIEW_YIELD_MS = 60000;
+// Player and Chatter match this reason to explain the timeout on the message.
+export const GENERATION_TIMEOUT = "生成処理タイムアウト";
 export class Engine extends EventEmitter {
   constructor(store, options = {}) {
     super();
@@ -40,6 +53,7 @@ export class Engine extends EventEmitter {
     this.queue = [];
     this.busy = false;
     this.degraded = false;
+    this.recovery = null;
     this.lastError = null;
     this.closed = false;
     this.rate = { tokens: 30, updated: Date.now() };
@@ -47,7 +61,8 @@ export class Engine extends EventEmitter {
     this.audioDir = join(store.dir, "audio");
     mkdirSync(this.audioDir, { recursive: true, mode: 0o700 });
     for (const f of readdirSync(this.audioDir))
-      if (/^[\w-]+\.(wav|tmp)$/.test(f)) unlinkSync(join(this.audioDir, f));
+      if (/^[\w.-]+\.(wav|tmp|ogg)$/.test(f))
+        unlinkSync(join(this.audioDir, f));
     this.references = new ReferenceVoices((...args) =>
       (this.options.fetchImpl ?? fetch)(...args),
     );
@@ -573,11 +588,48 @@ export class Engine extends EventEmitter {
     });
   }
   audioBytes() {
-    return [...this.audio.values()].reduce((s, a) => s + a.bytes, 0);
+    return [...this.audio.values()].reduce(
+      (s, a) => s + a.bytes + (a.encodedBytes ?? 0),
+      0,
+    );
   }
   audioFile(audioId) {
     const audio = this.audio.get(audioId);
     return audio && audio.retainUntil > Date.now() ? audio.file : null;
+  }
+  /**
+   * The audio in the format chosen on the admin screen. Opus goes only to
+   * clients that can decode it; anything that cannot be made falls back to WAV.
+   */
+  async deliveredAudio(a, canOpus) {
+    let format = this.config.audioFormat ?? DEFAULT_AUDIO_FORMAT;
+    if (format.startsWith("opus") && !canOpus) format = "wav";
+    const original = { file: a.file, mediaType: "audio/wav" };
+    if (format === "wav") return original;
+    a.encoded ??= new Map();
+    if (!a.encoded.has(format))
+      a.encoded.set(
+        format,
+        this.encodeAudio(a, format).catch(() => null),
+      );
+    return (await a.encoded.get(format)) ?? original;
+  }
+  async encodeAudio(a, format) {
+    const opus = format.startsWith("opus") ? await loadOpus() : null;
+    if (format.startsWith("opus") && !opus) return null;
+    const wav = readFileSync(a.file),
+      out = opus
+        ? encodeOggOpus(wav, opus, AUDIO_FORMATS[format].bitrate)
+        : downsampleWav(wav, AUDIO_FORMATS[format].sampleRate);
+    if (!out || !this.audio.has(a.id)) return null;
+    const file = join(
+      this.audioDir,
+      `${a.id}.${format}.${opus ? "ogg" : "wav"}`,
+    );
+    writeFileSync(file, out, { mode: 0o600 });
+    (a.encodedFiles ??= []).push(file);
+    a.encodedBytes = (a.encodedBytes ?? 0) + out.length;
+    return { file, mediaType: opus ? "audio/ogg" : "audio/wav" };
   }
   saveAudio(wav) {
     const info = inspectWav(wav);
@@ -603,7 +655,11 @@ export class Engine extends EventEmitter {
   }
   async pump() {
     if (this.busy || this.closed || this.degraded) return;
-    const o = this.queue.shift();
+    const now = Date.now();
+    const index = this.queue.findIndex(
+      (x) => !x.preview || now - x.created >= PREVIEW_YIELD_MS,
+    );
+    const [o] = this.queue.splice(Math.max(index, 0), 1);
     if (!o) return;
     this.busy = true;
     this.working = o;
@@ -675,15 +731,53 @@ export class Engine extends EventEmitter {
       this.lastError = timeout
         ? "生成タイムアウト。上流の処理完了を確認してください"
         : e.message;
-      if (timeout) this.degraded = true;
+      if (timeout) this.markDegraded();
       if (o.preview) o.reject(e);
       else if (o.status === "synthesizing" || o.status === "queued")
-        this.skip(o, "failed", this.lastError);
+        this.skip(o, "failed", timeout ? GENERATION_TIMEOUT : this.lastError);
     } finally {
       this.busy = false;
       this.working = null;
       if (!this.closed) queueMicrotask(() => this.pump());
     }
+  }
+  markDegraded() {
+    this.degraded = true;
+    this.scheduleRecovery();
+  }
+  /** Checks the TTS server until it answers, then resumes the queue. */
+  scheduleRecovery() {
+    if (this.recovery || this.closed) return;
+    const timer = setTimeout(async () => {
+      const healthy = await this.providerHealthy();
+      if (this.recovery === timer) this.recovery = null;
+      if (this.closed || !this.degraded) return;
+      if (healthy) this.recover();
+      else this.scheduleRecovery();
+    }, this.options.recoveryIntervalMs ?? RECOVERY_INTERVAL_MS);
+    timer.unref?.();
+    this.recovery = timer;
+  }
+  async providerHealthy() {
+    const provider = this.config.provider;
+    if (provider.type === "mock") return true;
+    try {
+      const r = await (this.options.fetchImpl ?? fetch)(
+        `${provider.baseUrl}/health`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      await r.body?.cancel().catch(() => {});
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+  recover() {
+    clearTimeout(this.recovery);
+    this.recovery = null;
+    this.degraded = false;
+    this.lastError = null;
+    this.pump();
   }
   preview(text, voice, options = {}) {
     check(
@@ -780,9 +874,10 @@ export class Engine extends EventEmitter {
         for (const o of this.orders.values())
           if (o.ready?.audio.id === id && o.status === "ready")
             this.setStatus(o, "expired");
-        try {
-          unlinkSync(a.file);
-        } catch {}
+        for (const file of [a.file, ...(a.encodedFiles ?? [])])
+          try {
+            unlinkSync(file);
+          } catch {}
         this.audio.delete(id);
       }
     for (const [id, o] of this.orders)
@@ -799,6 +894,7 @@ export class Engine extends EventEmitter {
     this.chatVoices.shutdown();
     this.closed = true;
     clearInterval(this.timer);
+    clearTimeout(this.recovery);
     this.reset(false, "アプリ終了で中断しました");
   }
 }

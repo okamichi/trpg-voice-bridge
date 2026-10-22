@@ -47,6 +47,10 @@ p {
 small {
   color: var(--muted);
 }
+.audio-timeout {
+  cursor: help;
+  text-decoration: underline dotted;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));

@@ -309,7 +309,7 @@ Bで実行ファイルを作り直すときは、`package:speech` → `package:b
 
 AでChatterのソースや共通Playerを更新したら `npm run chatter:build` を再実行してください。バージョンを変更するときは `package.json` を更新して `npm run version` を実行すると、Collector・ChatterのManifestとlockfileも同期します。`npm run version:check` はずれを検出します。
 
-ソースを変えた場合は、`npm test` と `npm run test:browser` で確かめられます。`test:browser` を初めて実行する前に `npx playwright install chromium` を実行してください。
+ソースを変えた場合は、`npm test` と `npm run test:browser` で確かめられます。`test:browser` を初めて実行する前に `npx playwright install chromium` を実行してください。書式は `npm run format:check` で確認し、`npm run format` で整えられます。プルリクエストとmainへのpushでは、GitHub Actionsの「Tests」がこの3つを実行します。
 
 作成したZIPと同梱拡張をブラウザで検証する場合は、`npm run package:smoke:browser` を実行します。実行ファイルはNodeやnpmがPATHにない状態で起動し、配布版PlayerとChatterの双方向チャットを確認します。
 

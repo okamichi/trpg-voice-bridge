@@ -1,5 +1,7 @@
 node_modules/
 data/
+startup.json
+startup.json.tmp
 verification/
 test-results/
 playwright-report/

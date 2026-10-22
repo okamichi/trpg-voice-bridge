@@ -1,56 +1,16 @@
 import { chatterDownload } from "../chatter/zip.mjs";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { readAsset } from "./runtime/assets.mjs";
 import { Store, initialConfig } from "./store.mjs";
-import {
-  characterSettings,
-  saveCharacter,
-  removeCharacter,
-  removeVoiceProfile,
-  createCharacter,
-} from "./character-settings.mjs";
-import { Engine, DEFAULT_SENTENCE_PAUSE_MS } from "./engine.mjs";
-import { DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS } from "./sentences.mjs";
-import {
-  check,
-  HttpError,
-  hash,
-  voiceSchema,
-  sourceKey,
-  DELIVERY_CAPTION_MODES,
-} from "./contracts.mjs";
-const equal = (a, b) => {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  const x = Buffer.from(a ?? ""),
-    y = Buffer.from(b ?? "");
-  return x.length === y.length && timingSafeEqual(x, y);
-};
-const json = (res, status, data) => {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(data));
-};
-async function body(req, limit = 16384) {
-  check(
-    (req.headers["content-type"] ?? "").startsWith("application/json"),
-    "JSONが必要です",
-    415,
-  );
-  let size = 0;
-  const chunks = [];
-  for await (const c of req) {
-    size += c.length;
-    check(size <= limit, "要求が大きすぎます", 413);
-    chunks.push(c);
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks));
-  } catch {
-    throw new HttpError(400, "JSON形式が不正です");
-  }
-}
+import { Engine } from "./engine.mjs";
+import { check, HttpError, hash } from "./contracts.mjs";
+import { equal, json } from "./http-util.mjs";
+import { publicRoutes } from "./routes/public.mjs";
+import { adminRoutes } from "./routes/admin.mjs";
+import { participantRoutes } from "./routes/participant.mjs";
+import { collectorRoutes } from "./routes/collector.mjs";
 export function createApp({
   dataDir,
   profiles = {},
@@ -99,8 +59,6 @@ export function createApp({
     connections = new Map(),
     disconnects = new Map(),
     previews = new Map();
-  let invitationGeneration = 0,
-    currentInvite;
   const bootAccess = randomBytes(32).toString("hex"),
     pairings = new Map();
   const cookie = (req, name) =>
@@ -197,12 +155,13 @@ export function createApp({
       403,
     );
   };
-  function wave(res, wav) {
+  function wave(res, wav, mediaType = "audio/wav") {
     res.writeHead(200, {
-      "Content-Type": "audio/wav",
+      "Content-Type": mediaType,
       "Content-Length": wav.length,
     });
     res.end(wav);
+    return true;
   }
   async function idempotent(req, b, fn) {
     const key = req.headers["idempotency-key"];
@@ -280,6 +239,44 @@ export function createApp({
   function changed(before) {
     engine.configChanged(before);
   }
+  // Shared with the route modules. Origins and the invitation can change
+  // after start-up, so routes read them through this object.
+  const ctx = {
+    store,
+    engine,
+    runtime,
+    onShutdown,
+    credits,
+    loadDefaults,
+    publicOrigin,
+    get localOrigin() {
+      return localOrigin;
+    },
+    session: { currentInvite: undefined, invitationGeneration: 0 },
+    installedExtensions,
+    download,
+    players,
+    invites,
+    commands,
+    pairings,
+    previews,
+    connections,
+    bootAccess,
+    wave,
+    idempotent,
+    origin,
+    admin,
+    player,
+    participantOrigin,
+    chatterOrigin,
+    collector,
+    authAdmin,
+    voices,
+    voiceProfileUses,
+    registerVoice,
+    changed,
+    wss: null,
+  };
   let closing = false;
   const server = createServer(async (req, res) => {
     res.setHeader("Cache-Control", "private, no-store");
@@ -292,717 +289,14 @@ export function createApp({
     try {
       check(!closing, "アプリ終了中です", 503);
       check(hosts.has(req.headers.host), "許可されていないHostです", 403);
-      const url = new URL(req.url, localOrigin),
-        path = url.pathname,
-        method = req.method;
-      if (path === "/healthz" && method === "GET")
-        return json(res, 200, { status: "ok" });
-      const extensionScript = path.match(
-        /^\/web\/ext\/([a-z0-9-]+)\/admin\.js$/,
-      );
-      if (method === "GET" && extensionScript) {
-        origin(req, true);
-        const extension = installedExtensions.get(extensionScript[1]);
-        check(extension, "拡張がありません", 404);
-        res.writeHead(200, {
-          "Content-Type": "text/javascript; charset=utf-8",
-        });
-        return res.end(
-          extension.adminAsset
-            ? readAsset(extension.adminAsset)
-            : readFileSync(extension.adminScript),
-        );
-      }
-      if (method === "GET" && path === "/downloads/chatter.zip") {
-        check(download, "ChatterのZIPを作成できませんでした", 503);
-        res.writeHead(200, {
-          "Content-Type": "application/zip",
-          "Content-Disposition": `attachment; filename="${download.filename}"`,
-          "Content-Length": download.content.length,
-        });
-        return res.end(download.content);
-      }
-      const staticFiles = {
-        "/player/": ["player.html", "text/html"],
-        "/admin/": ["admin.html", "text/html"],
-        "/web/style.css": ["style.css", "text/css"],
-        "/web/characters.js": ["characters.js", "text/javascript"],
-        "/web/player.js": ["player.js", "text/javascript"],
-        "/web/admin.js": ["admin.js", "text/javascript"],
-        "/web/playback.js": ["playback.js", "text/javascript"],
-        "/web/uuid.js": ["uuid.js", "text/javascript"],
-        "/web/bridge-client.js": ["bridge-client.js", "text/javascript"],
-        "/web/chat-history.js": ["chat-history.js", "text/javascript"],
-        "/web/chat-view.js": ["chat-view.js", "text/javascript"],
-      };
-      if (method === "GET" && staticFiles[path]) {
-        if (path === "/admin/" || path === "/web/admin.js") origin(req, true);
-        const [f, mime] = staticFiles[path];
-        res.writeHead(200, { "Content-Type": `${mime}; charset=utf-8` });
-        return res.end(readAsset(`web/${f}`));
-      }
-      if (path === "/api/v1/admin-login" && method === "POST") {
-        origin(req, true);
-        const b = await body(req);
-        check(
-          equal(b.access, bootAccess),
-          "管理用リンクが無効です。起動ログを確認してください",
-          401,
-        );
-        res.setHeader(
-          "Set-Cookie",
-          `trpg_admin=${store.secrets.admin}; HttpOnly; SameSite=Strict; Path=/`,
-        );
-        return json(res, 200, { ok: true });
-      }
-      if (path === "/api/v1/pairings" && method === "POST") {
-        check(
-          req.headers.host === new URL(localOrigin).host,
-          "ローカル接続が必要です",
-          403,
-        );
-        check(
-          !req.headers.origin ||
-            /^chrome-extension:\/\/[a-z]+$/.test(req.headers.origin),
-          "拡張から接続してください",
-          403,
-        );
-        const b = await body(req);
-        check(
-          typeof b.key === "string" && /^[a-f0-9]{64}$/.test(b.key),
-          "接続キーが不正です",
-        );
-        for (const [k, v] of pairings)
-          if (v.expires < Date.now()) pairings.delete(k);
-        const key = hash(b.key);
-        let pending = pairings.get(key);
-        if (!pending) {
-          check(pairings.size < 20, "接続承認の待機数が上限です", 429);
-          pending = {
-            id: randomUUID(),
-            code: randomBytes(3).toString("hex").toUpperCase(),
-            origin: req.headers.origin ?? "",
-            expires: Date.now() + 300000,
-          };
-          pairings.set(key, pending);
-        }
-        check(
-          pending.origin === (req.headers.origin ?? ""),
-          "異なる拡張です",
-          403,
-        );
-        return json(res, 200, {
-          code: pending.code,
-          status: pending.token
-            ? "approved"
-            : pending.rejected
-              ? "rejected"
-              : "pending",
-          token: pending.token,
-        });
-      }
-      if (path.startsWith("/api/v1/admin/")) {
-        admin(req);
-        if (path === "/api/v1/admin/extensions" && method === "GET")
-          return json(
-            res,
-            200,
-            [...installedExtensions.values()].map(({ id, title }) => ({
-              id,
-              title,
-              script: `/web/ext/${id}/admin.js`,
-            })),
-          );
-        const extensionRoute = path.match(
-          /^\/api\/v1\/admin\/ext\/([a-z0-9-]+)\/(.*)$/,
-        );
-        if (extensionRoute) {
-          const extension = installedExtensions.get(extensionRoute[1]);
-          check(extension, "拡張がありません", 404);
-          const result = await extension.admin({
-            method,
-            path: extensionRoute[2],
-            query: url.searchParams,
-            body: ["POST", "PUT", "PATCH"].includes(method)
-              ? await body(req)
-              : undefined,
-          });
-          return json(res, result.status ?? 200, result.data);
-        }
-        if (path === "/api/v1/admin/config" && method === "GET")
-          return json(res, 200, store.config);
-        if (
-          path === "/api/v1/admin/chat-voice-registration" &&
-          method === "PUT"
-        ) {
-          const b = await body(req);
-          check(
-            typeof b.chatVoiceRegistrationEnabled === "boolean",
-            "チャットによる登録機能の設定が不正です",
-          );
-          store.change((c) => {
-            store.compare(c.chatVoiceRegistrationEnabled ?? false, b.before);
-            c.chatVoiceRegistrationEnabled = b.chatVoiceRegistrationEnabled;
-            if (!b.chatVoiceRegistrationEnabled)
-              store.voiceCommands.cancel(
-                null,
-                "チャット登録機能がOFFになったため中断しました",
-              );
-          });
-          engine.chatVoices.reconcile();
-          engine.notify("characters.changed");
-          return json(res, 200, {
-            chatVoiceRegistrationEnabled:
-              store.config.chatVoiceRegistrationEnabled,
-          });
-        }
-        if (path === "/api/v1/admin/delivery" && method === "PUT") {
-          const b = await body(req);
-          check(
-            DELIVERY_CAPTION_MODES.includes(b.deliveryCaptionMode),
-            "感情・演技の指定方法が不正です",
-          );
-          store.change((c) => {
-            store.compare(c.deliveryCaptionMode ?? "append", b.before);
-            c.deliveryCaptionMode = b.deliveryCaptionMode;
-          });
-          return json(res, 200, {
-            deliveryCaptionMode: store.config.deliveryCaptionMode,
-          });
-        }
-        if (path === "/api/v1/admin/provider" && method === "PUT") {
-          check(
-            runtime?.settings.active.mode !== "bundled",
-            "内蔵TTSの使用中は外部接続先を変更できません",
-            409,
-          );
-          const b = await body(req);
-          store.change((c) => {
-            store.compare(c.provider, b.before);
-            c.provider.baseUrl = b.baseUrl;
-            store.voiceCommands.cancel(null, "TTS接続先の変更で中断しました");
-          });
-          engine.chatVoices.reconcile();
-          engine.notify("characters.changed");
-          return json(res, 200, store.config.provider);
-        }
-        if (path === "/api/v1/admin/splitting" && method === "PUT") {
-          const b = await body(req);
-          check(
-            Number.isInteger(b.sentenceSplitThresholdChars),
-            "文の分割しきい値は1～500文字です",
-          );
-          store.change((c) => {
-            store.compare(
-              c.sentenceSplitThresholdChars ??
-                DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS,
-              b.before,
-            );
-            c.sentenceSplitThresholdChars = b.sentenceSplitThresholdChars;
-          });
-          return json(res, 200, {
-            sentenceSplitThresholdChars:
-              store.config.sentenceSplitThresholdChars,
-          });
-        }
-        if (path === "/api/v1/admin/playback" && method === "PUT") {
-          const b = await body(req);
-          check(
-            Number.isInteger(b.sentencePauseMs),
-            "文の間は0～3000ミリ秒です",
-          );
-          store.change((c) => {
-            store.compare(
-              c.sentencePauseMs ?? DEFAULT_SENTENCE_PAUSE_MS,
-              b.before,
-            );
-            c.sentencePauseMs = b.sentencePauseMs;
-          });
-          return json(res, 200, {
-            sentencePauseMs: store.config.sentencePauseMs,
-          });
-        }
-        if (path === "/api/v1/admin/subtitles" && method === "PUT") {
-          const b = await body(req);
-          check(
-            typeof b.publishTextToPlayers === "boolean",
-            "字幕設定が不正です",
-          );
-          store.change((c) => {
-            store.compare(c.publishTextToPlayers, b.before);
-            c.publishTextToPlayers = b.publishTextToPlayers;
-            if (b.before !== b.publishTextToPlayers)
-              store.chat.advanceGenerationInside();
-          });
-          engine.chatPolicyChanged();
-          return json(res, 200, {
-            publishTextToPlayers: store.config.publishTextToPlayers,
-          });
-        }
-        if (path === "/api/v1/admin/chat-history" && method === "DELETE") {
-          const result = store.chat.clear();
-          engine.chatPolicyChanged(true);
-          return json(res, 200, result);
-        }
-        if (path === "/api/v1/admin/pairings") {
-          if (method === "GET")
-            return json(
-              res,
-              200,
-              [...pairings.values()]
-                .filter(
-                  (p) => !p.token && !p.rejected && p.expires > Date.now(),
-                )
-                .map(({ id, code }) => ({ id, code })),
-            );
-          if (method === "POST") {
-            const b = await body(req),
-              p = [...pairings.values()].find((p) => p.id === b.id);
-            check(
-              p && p.expires > Date.now() && !p.rejected,
-              "承認待ちの接続がありません",
-              404,
-            );
-            if (b.approve === true) {
-              if (!p.token) {
-                p.token = randomBytes(32).toString("hex");
-                store.setAuth("collector:" + hash(p.token), {
-                  origin: p.origin,
-                });
-              }
-            } else p.rejected = true;
-            return json(res, 200, { ok: true });
-          }
-        }
-        if (path === "/api/v1/admin/credits" && method === "GET")
-          return json(res, 200, credits);
-        if (runtime && path.startsWith("/api/v1/admin/models")) {
-          try {
-            if (path === "/api/v1/admin/models" && method === "GET")
-              return json(res, 200, await runtime.models.list());
-            if (path === "/api/v1/admin/models/dir" && method === "PUT") {
-              await runtime.models.setDir((await body(req))?.dir);
-              return json(res, 200, await runtime.models.list());
-            }
-            if (path === "/api/v1/admin/models/pull" && method === "POST")
-              return json(
-                res,
-                202,
-                await runtime.models.pull((await body(req))?.choice),
-              );
-            if (path === "/api/v1/admin/models/pull" && method === "DELETE") {
-              await runtime.models.cancel();
-              return json(res, 200, { ok: true });
-            }
-          } catch (e) {
-            throw new HttpError(e.status ?? 500, e.message);
-          }
-        }
-        if (runtime && path === "/api/v1/admin/runtime") {
-          if (method === "PUT") {
-            try {
-              runtime.settings.save(await body(req));
-            } catch (e) {
-              throw new HttpError(400, e.message);
-            }
-          } else check(method === "GET", "許可されていない操作です", 405);
-          return json(res, 200, runtime.snapshot());
-        }
-        if (
-          onShutdown &&
-          path === "/api/v1/admin/shutdown" &&
-          method === "POST"
-        ) {
-          json(res, 200, { ok: true });
-          setImmediate(() => onShutdown());
-          return;
-        }
-        if (path === "/api/v1/admin/diagnostics" && method === "GET") {
-          let tts;
-          try {
-            if (runtime?.settings.active.mode === "bundled")
-              tts = { status: runtime.status, error: runtime.error };
-            else if (engine.config.provider.type === "mock")
-              tts = { status: "mock" };
-            else {
-              const r = await fetch(
-                `${engine.config.provider.baseUrl}/health`,
-                {
-                  signal: AbortSignal.timeout(5000),
-                },
-              );
-              check(r.ok, "TTS診断失敗", 502);
-              const h = await r.json();
-              tts = { status: h.status, model: h.model, runtime: h.runtime };
-            }
-          } catch (e) {
-            tts = { status: "unreachable", error: e.message };
-          }
-          return json(res, 200, {
-            ...engine.metadata(),
-            ...(runtime ? { runtime: runtime.snapshot() } : {}),
-            canShutdown: Boolean(onShutdown),
-            accepting: engine.accepting,
-            tts,
-            degraded: engine.degraded,
-            lastError: engine.lastError,
-            voiceCommands: store.voiceCommands.diagnostics(),
-            pending: engine.queue.length,
-            busy: engine.busy,
-            audioBytes: engine.audioBytes(),
-            collectors: [...engine.collectors.values()].map((c) => ({
-              ...c,
-              online: Date.now() - c.seen < 60000,
-            })),
-            players: [...connections.values()].map((c) => ({
-              clientId: c.clientId,
-              state: c.state,
-              seen: c.seen,
-            })),
-            orders: [...engine.orders.values()].slice(-30).map((o) => ({
-              ...engine.publicOrder(o),
-              generationMs: o.generationMs,
-            })),
-          });
-        }
-        if (
-          path === "/api/v1/admin/providers/irodori-local/voices" &&
-          method === "GET"
-        )
-          return json(res, 200, await voices());
-        if (path === "/api/v1/admin/previews" && method === "POST") {
-          const b = await body(req);
-          const wav = await idempotent(req, b, () => {
-            voiceSchema(b.voice);
-            return engine.preview(b.text, b.voice);
-          });
-          return wave(res, wav);
-        }
-        if (path === "/api/v1/admin/commands" && method === "POST") {
-          const b = await body(req);
-          check(
-            typeof b.commandId === "string" &&
-              /^[\w-]{1,120}$/.test(b.commandId),
-            "commandIdが必要です",
-          );
-          const old = commands.get(b.commandId);
-          if (old) {
-            check(old.fingerprint === hash(b), "操作IDの内容が異なります", 409);
-            return json(res, 200, old.result);
-          }
-          check(commands.size < 2000, "操作上限です", 429);
-          let result = { ok: true };
-          if (b.command === "replay") {
-            result = engine.replay(b.orderId);
-          } else if (b.command === "start") {
-            engine.accepting = true;
-            engine.pump();
-          } else if (b.command === "stop") engine.reset();
-          else if (b.command === "reset") engine.reset();
-          else if (b.command === "end") {
-            engine.reset(true);
-            invites.clear();
-            currentInvite = null;
-            players.clear();
-            for (const ws of wss.clients) ws.close(1000, "session ended");
-          } else if (b.command === "recover-provider") {
-            engine.degraded = false;
-            engine.lastError = null;
-            engine.pump();
-          } else if (b.command === "release-collector")
-            engine.collectors.clear();
-          else if (b.command === "reset-settings") {
-            check(b.confirm === true, "初期化の確認が必要です");
-            engine.reset(false, "設定リセットで中断しました");
-            const before = store.config;
-            store.resetDefaults(loadDefaults?.());
-            changed(before);
-          } else if (b.command === "revoke-collectors") {
-            store.revokeCollectors();
-            engine.collectors.clear();
-            pairings.clear();
-          } else if (b.command === "invite" || b.command === "renew-invite") {
-            if (b.command === "invite" && currentInvite?.expires > Date.now())
-              result = currentInvite;
-            else {
-              invitationGeneration++;
-              invites.clear();
-              const token = randomBytes(32).toString("hex");
-              invites.set(hash(token), {
-                expires: Date.now() + 3600000,
-                sessionId: engine.sessionId,
-                generation: invitationGeneration,
-              });
-              result = {
-                url: `${publicOrigin || localOrigin}/player/#invite=${token}`,
-                localUrl: `${localOrigin}/player/#invite=${token}`,
-                expires: Date.now() + 3600000,
-              };
-              currentInvite = result;
-            }
-          } else throw new HttpError(422, "不明なコマンドです");
-          commands.set(b.commandId, {
-            fingerprint: hash(b),
-            result,
-            time: Date.now(),
-          });
-          return json(res, 200, result);
-        }
-        throw new HttpError(404, "管理APIが見つかりません");
-      }
-      if (
-        ["/api/v1/join", "/api/v1/chatter/join"].includes(path) &&
-        method === "POST"
-      ) {
-        const extensionOrigin =
-          path === "/api/v1/chatter/join" ? chatterOrigin(req) : null;
-        if (!extensionOrigin) origin(req);
-        const b = await body(req);
-        const invite = invites.get(hash(b.invite ?? ""));
-        check(
-          invite &&
-            invite.expires > Date.now() &&
-            invite.sessionId === engine.sessionId,
-          "招待が失効しています",
-          401,
-        );
-        check(players.size < 200, "参加者上限です", 429);
-        const token = randomBytes(32).toString("hex");
-        players.set(hash(token), {
-          id: randomUUID(),
-          kind: extensionOrigin ? "chatter" : "player",
-          origin: extensionOrigin,
-          host: req.headers.host,
-          roomId: store.config.roomId,
-          sessionId: engine.sessionId,
-          expires: Date.now() + 12 * 3600000,
-        });
-        if (extensionOrigin)
-          return json(res, 200, {
-            token,
-            roomId: store.config.roomId,
-            sessionId: engine.sessionId,
-            expires: players.get(hash(token)).expires,
-          });
-        const secure =
-          req.headers.host === new URL(publicOrigin || localOrigin).host &&
-          (publicOrigin || localOrigin).startsWith("https:");
-        res.setHeader(
-          "Set-Cookie",
-          `trpg_player=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure ? "; Secure" : ""}`,
-        );
-        return json(res, 200, { roomId: store.config.roomId });
-      }
-      if (path === "/api/v1/leave" && method === "POST") {
-        participantOrigin(req);
-        const p = player(req);
-        p.revoked = true;
-        for (const [key, value] of players)
-          if (value === p) players.delete(key);
-        for (const [ws, conn] of connections)
-          if (conn.auth === p) ws.close(1000, "participant left");
-        if (p.kind !== "chatter")
-          res.setHeader(
-            "Set-Cookie",
-            "trpg_player=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
-          );
-        return json(res, 200, { ok: true });
-      }
-      const chatRoute =
-        /^\/api\/v1\/rooms\/([\w.-]+)\/(messages|message-changes)$/.exec(path);
-      if (chatRoute) {
-        participantOrigin(req);
-        const p = player(req);
-        check(chatRoute[1] === store.config.roomId, "別の卓です", 403);
-        check(
-          store.config.publishTextToPlayers,
-          "チャットと本文の共有は停止中です",
-          403,
-        );
-        if (method === "POST" && chatRoute[2] === "messages") {
-          const input = await body(req);
-          player(req); // Authentication can expire while the body is arriving.
-          const result = engine.participantMessage(input, p);
-          return json(res, result.http, result);
-        }
-        if (method === "GET") {
-          engine.prune();
-          const query = new URL(req.url, localOrigin).searchParams;
-          const number = (name, fallback) =>
-            query.has(name) ? Number(query.get(name)) : fallback;
-          const result =
-            chatRoute[2] === "messages"
-              ? store.chat.list({
-                  before: number("before"),
-                  after: number("after"),
-                  limit: number("limit", 100),
-                })
-              : store.chat.changes({
-                  since: number("since"),
-                  generation: number("generation"),
-                  limit: number("limit", 100),
-                });
-          return json(res, 200, result);
-        }
-        throw new HttpError(405, "許可されていない操作です");
-      }
-      if (path.startsWith("/api/v1/collectors/") && method === "POST") {
-        collector(req);
-        const b = await body(req);
-        if (path === "/api/v1/collectors/disconnect") {
-          const key = sourceKey(b.source),
-            old = engine.collectors.get(key);
-          check(
-            old?.collectorId === b.collectorId,
-            "指定Collectorではありません",
-            403,
-          );
-          engine.collectors.delete(key);
-          return json(res, 200, { ok: true });
-        }
-        check(
-          [
-            "/api/v1/collectors/connect",
-            "/api/v1/collectors/heartbeat",
-          ].includes(path),
-          "不明なCollector APIです",
-          404,
-        );
-        if (path.endsWith("/heartbeat"))
-          check(
-            engine.collectors.get(sourceKey(b.source))?.collectorId ===
-              b.collectorId,
-            "接続が解除されました。拡張から再接続してください",
-            409,
-          );
-        if (
-          path.endsWith("/connect") &&
-          !store.config.sources.some(
-            (s) => sourceKey(s) === sourceKey(b.source),
-          )
-        )
-          store.change((c) => {
-            const { adapter, instanceId, contextId } = b.source ?? {};
-            c.sources.push({ adapter, instanceId, contextId });
-          });
-        return json(res, 200, engine.connect(b));
-      }
-      if (path === "/api/v1/events" && method === "POST") {
-        collector(req);
-        const b = await body(req),
-          result = engine.ingress(b, req.headers["x-collector-id"]);
-        return json(res, result.http, result);
-      }
-      const settingsRoute =
-        /^\/api\/v1\/rooms\/([\w.-]+)\/(characters(?:\/([\w.-]+))?|voice-profiles\/([\w.-]+)|voices|previews)$/.exec(
-          path,
-        );
-      if (settingsRoute) {
-        participantOrigin(req);
-        player(req);
-        check(settingsRoute[1] === store.config.roomId, "別の卓です", 403);
-        if (method === "GET" && settingsRoute[2] === "characters")
-          return json(res, 200, {
-            ...characterSettings(store),
-            voiceProfileUses: voiceProfileUses(),
-          });
-        if (method === "POST" && settingsRoute[2] === "characters") {
-          const b = await body(req);
-          player(req);
-          const result = await idempotent(req, b, () => {
-            player(req);
-            const value = createCharacter(store, b);
-            engine.notify("characters.changed");
-            return { value };
-          });
-          return json(res, 201, result);
-        }
-        if (method === "DELETE" && settingsRoute[4]) {
-          const b = await body(req, 65536);
-          const result = await idempotent(req, b, () => {
-            player(req);
-            const previous = store.config;
-            const value = removeVoiceProfile(
-              store,
-              settingsRoute[4],
-              b,
-              voiceProfileUses(),
-            );
-            changed(previous);
-            return { value };
-          });
-          return json(res, 200, result);
-        }
-        if (method === "GET" && settingsRoute[2] === "voices")
-          return json(res, 200, await voices());
-        if (["PATCH", "DELETE"].includes(method) && settingsRoute[3]) {
-          const b = await body(req, 65536);
-          const result = await idempotent(req, b, () => {
-            player(req);
-            const previous = store.config;
-            const value =
-              method === "DELETE"
-                ? removeCharacter(store, settingsRoute[3], b)
-                : saveCharacter(store, settingsRoute[3], b);
-            changed(previous);
-            return { value };
-          });
-          return json(res, 200, result);
-        }
-        if (method === "POST" && settingsRoute[2] === "voices") {
-          const b = await body(req);
-          return json(
-            res,
-            201,
-            await idempotent(req, b, () => {
-              player(req);
-              return registerVoice(b);
-            }),
-          );
-        }
-        if (method === "POST" && settingsRoute[2] === "previews") {
-          const b = await body(req);
-          const preview = await idempotent(req, b, async () => {
-            player(req);
-            voiceSchema(b.voice);
-            const wav = await engine.preview(b.text, b.voice),
-              id = randomUUID();
-            previews.set(id, { wav, time: Date.now() });
-            return { wav, id };
-          });
-          res.setHeader("X-Preview-Id", preview.id);
-          return wave(res, preview.wav);
-        }
-      }
-      const room =
-        /^\/api\/v1\/rooms\/([\w.-]+)\/(state|audio\/([\w-]+))$/.exec(path);
-      if (room && method === "GET") {
-        if (authAdmin(req)) admin(req);
-        else {
-          participantOrigin(req);
-          player(req);
-        }
-        check(room[1] === store.config.roomId, "別の卓です", 403);
-        if (room[2] === "state")
-          return json(res, 200, {
-            ...engine.snapshot(),
-            ...(!authAdmin(req) ? { participantId: player(req).id } : {}),
-          });
-        const a = engine.audio.get(room[3]);
-        check(
-          a &&
-            a.retainUntil > Date.now() &&
-            [...engine.orders.values()].some(
-              (o) =>
-                o.status === "ready" &&
-                o.epoch === engine.playbackEpoch &&
-                o.ready?.audio.id === a.id,
-            ),
-          "音声が期限切れです",
-          404,
-        );
-        return wave(res, readFileSync(a.file));
-      }
+      const url = new URL(req.url, localOrigin);
+      for (const routes of [
+        publicRoutes,
+        adminRoutes,
+        participantRoutes,
+        collectorRoutes,
+      ])
+        if (await routes(ctx, req, res, url)) return;
       throw new HttpError(404, "見つかりません");
     } catch (e) {
       if (!res.headersSent) {
@@ -1026,6 +320,7 @@ export function createApp({
     }
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16384 });
+  ctx.wss = wss;
   server.on("upgrade", (req, socket, head) => {
     if (closing) {
       socket.destroy();

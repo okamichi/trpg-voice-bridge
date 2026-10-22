@@ -33,7 +33,8 @@ let accepting = false,
   deliveryCaptionMode,
   publishText,
   sentencePauseMs,
-  sentenceSplitThresholdChars;
+  sentenceSplitThresholdChars,
+  audioFormat;
 async function api(path, method = "GET", body) {
   const r = await fetch(`/api/v1/admin/${path}`, {
     method,
@@ -349,6 +350,23 @@ $("sentenceSplitThreshold").onchange = () =>
       $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
     }
   });
+$("audioFormat").onchange = () =>
+  run(async () => {
+    const wanted = $("audioFormat").value;
+    $("audioFormat").disabled = true;
+    try {
+      audioFormat = (
+        await api("audio-format", "PUT", {
+          before: audioFormat,
+          audioFormat: wanted,
+        })
+      ).audioFormat;
+      $("notice").textContent = "音声の配信形式を保存しました。";
+    } finally {
+      $("audioFormat").value = audioFormat;
+      $("audioFormat").disabled = false;
+    }
+  });
 $("sentencePause").onchange = () =>
   run(async () => {
     const wanted = Math.round(Number($("sentencePause").value) * 1000);
@@ -431,6 +449,8 @@ await run(async () => {
   publishText = config.publishTextToPlayers;
   sentencePauseMs = config.sentencePauseMs ?? 900;
   sentenceSplitThresholdChars = config.sentenceSplitThresholdChars ?? 150;
+  audioFormat = config.audioFormat ?? "opus64";
+  $("audioFormat").value = audioFormat;
   $("providerUrl").value = provider.baseUrl;
   $("deliveryCaptionMode").value = deliveryCaptionMode;
   $("publishText").checked = publishText;

@@ -47,13 +47,32 @@ function report(type, state, item) {
   if (socket?.readyState === 1)
     socket.send(JSON.stringify({ type, state, orderId: item?.orderId }));
 }
+// 50 milliseconds of silence as Ogg Opus. Older Safari cannot decode it,
+// so those browsers keep receiving WAV.
+const OPUS_PROBE =
+  "T2dnUwACAAAAAAAAAAD001R7AAAAAGQTKCEBE09wdXNIZWFkAQE4AYA+AAAAAABPZ2dTAAAAAAAAAAAAAPTTVHsBAAAAOje9PQEhT3B1c1RhZ3MRAAAAdHJwZy12b2ljZS1icmlkZ2UAAAAAT2dnUwAEmAoAAAAAAAD001R7AgAAAClA5tYDCAkISAvkwTbsxYBIB8lyJ+FE6lBIB8l5yMlXwA==";
+let opusSupport;
+function decodesOpus() {
+  opusSupport ??= context
+    .decodeAudioData(
+      Uint8Array.from(atob(OPUS_PROBE), (c) => c.charCodeAt(0)).buffer,
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  return opusSupport;
+}
 const playback = new Playback({
   now: () => Date.now() + offset,
   load: async (item, signal) => {
     let last;
     for (let n = 0; n < 2; n++) {
       try {
-        const r = await bridge.request(item.audio.url, { signal });
+        const url = (await decodesOpus())
+          ? `${item.audio.url}?format=opus`
+          : item.audio.url;
+        const r = await bridge.request(url, { signal });
         if (Number(r.headers.get("content-length")) > 25 * 1024 * 1024)
           throw new Error("音声が大きすぎます");
         return await context.decodeAudioData(await r.arrayBuffer());

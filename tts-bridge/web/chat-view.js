@@ -1,6 +1,11 @@
 import { ChatHistory } from "./chat-history.js";
 import { randomUUID } from "./uuid.js";
 
+// Same text as GENERATION_TIMEOUT in src/engine.mjs.
+const GENERATION_TIMEOUT = "生成処理タイムアウト";
+const GENERATION_TIMEOUT_HINT =
+  "処理がタイムアウトしました。セリフの文字数を少なくするか、軽いモデルに切り替えてください。";
+
 export function mountChat({ client, replay, canReplay, refreshCharacters }) {
   const $ = (id) => document.getElementById(id);
   let meta,
@@ -171,12 +176,20 @@ export function mountChat({ client, replay, canReplay, refreshCharacters }) {
         text.className = "log-text";
         text.textContent = m.text;
         const state = document.createElement("small");
-        state.textContent = [
-          audioLabels[m.audioStatus] ?? m.audioStatus,
-          m.audioReason,
-        ]
-          .filter(Boolean)
-          .join("：");
+        if (
+          m.audioStatus === "failed" &&
+          m.audioReason === GENERATION_TIMEOUT
+        ) {
+          state.textContent = GENERATION_TIMEOUT;
+          state.title = GENERATION_TIMEOUT_HINT;
+          state.className = "audio-timeout";
+        } else
+          state.textContent = [
+            audioLabels[m.audioStatus] ?? m.audioStatus,
+            m.audioReason,
+          ]
+            .filter(Boolean)
+            .join("：");
         const button = document.createElement("button");
         button.type = "button";
         button.className = "secondary";

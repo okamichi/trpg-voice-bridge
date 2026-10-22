@@ -1,4 +1,13 @@
 import { createHash } from "node:crypto";
+// How audio is delivered to Player and Chatter, chosen on the admin screen.
+export const AUDIO_FORMATS = Object.freeze({
+  opus32: { bitrate: 32000, label: "Opus 32kbps" },
+  opus64: { bitrate: 64000, label: "Opus 64kbps" },
+  opus96: { bitrate: 96000, label: "Opus 96kbps" },
+  wav256: { sampleRate: 16000, label: "WAV 256kbps（16kHz）" },
+  wav: { label: "WAV（無圧縮）" },
+});
+export const DEFAULT_AUDIO_FORMAT = "opus64";
 export class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -169,6 +178,10 @@ export function configSchema(c) {
     c.deliveryCaptionMode === undefined ||
       DELIVERY_CAPTION_MODES.includes(c.deliveryCaptionMode),
     "感情・演技の指定方法が不正です",
+  );
+  check(
+    c.audioFormat === undefined || Object.hasOwn(AUDIO_FORMATS, c.audioFormat),
+    "音声の配信形式が不正です",
   );
   check(
     c.sentencePauseMs === undefined ||

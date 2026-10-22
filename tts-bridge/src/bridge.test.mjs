@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { Store, initialConfig } from "./store.mjs";
-import { Engine } from "./engine.mjs";
+import { Engine, PREVIEW_YIELD_MS, GENERATION_TIMEOUT } from "./engine.mjs";
 import { createApp } from "./http.mjs";
 import { mockWav, inspectWav, payload } from "./provider.mjs";
 import {
@@ -16,6 +16,7 @@ import {
 import { resolveCharacter } from "./contracts.mjs";
 import { Playback } from "../web/playback.js";
 import { splitUtterance, MAX_PARTS } from "./sentences.mjs";
+import { loadOpus } from "./audio-format.mjs";
 const fixtureSource = {
   adapter: "fixture",
   instanceId: "test",
@@ -277,9 +278,10 @@ test("character deletion discards late result and queued audio", async (t) => {
   );
   assert.equal(engine.history.at(-1).type, "order.skipped");
 });
-test("failure lets next order advance; timeout requires explicit recovery", async (t) => {
+test("failure lets next order advance; timeout degrades until the TTS answers", async (t) => {
   let calls = 0;
   const { engine, store } = setup(t, {
+    recoveryIntervalMs: 5,
     fetchImpl: async () => {
       calls++;
       if (calls === 1) throw new Error("upstream failure");
@@ -300,9 +302,79 @@ test("failure lets next order advance; timeout requires explicit recovery", asyn
   engine.ingress(event(engine, "three", "別の文"), "one");
   await idle(engine);
   assert.equal(engine.degraded, true);
+  const timedOut = [...engine.orders.values()].at(-1);
+  assert.equal(timedOut.error, GENERATION_TIMEOUT);
+  assert.equal(
+    store.chat.get(timedOut.chatMessageId).audioReason,
+    GENERATION_TIMEOUT,
+  );
   const accepted = engine.ingress(event(engine, "four"), "one");
   assert.equal(accepted.status, "failed");
   assert.equal(store.chat.get(accepted.messageId).text, "こんにちは");
+  // The health check keeps failing, so the bridge stays degraded.
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(engine.degraded, true);
+  const checked = [];
+  engine.options.fetchImpl = async (url) => {
+    checked.push(new URL(url).pathname);
+    return new Response(mockWav());
+  };
+  for (let n = 0; n < 100 && engine.degraded; n++)
+    await new Promise((r) => setTimeout(r, 5));
+  assert.equal(engine.degraded, false);
+  assert.equal(engine.lastError, null);
+  assert.equal(checked[0], "/health");
+  const next = engine.ingress(event(engine, "five", "復帰後"), "one");
+  assert.equal(next.status, "queued");
+  await idle(engine);
+  assert.equal(engine.orders.get(next.orderId).status, "ready");
+});
+test("live lines are made before waiting previews", async (t) => {
+  const { engine, store } = setup(t);
+  store.config.provider.type = "irodori";
+  const sent = [],
+    releases = [];
+  engine.options.fetchImpl = (url, init) => {
+    sent.push(JSON.parse(init.body).input);
+    return new Promise((r) => releases.push(() => r(new Response(mockWav()))));
+  };
+  const voice = store.config.voiceProfiles[0];
+  const first = engine.preview("試聴一", voice);
+  await new Promise((r) => setTimeout(r, 5));
+  const second = engine.preview("試聴二", voice);
+  engine.ingress(event(engine, "live", "本番"), "one");
+  for (let n = 0; n < 3; n++) {
+    for (let m = 0; m < 100 && releases.length <= n; m++)
+      await new Promise((r) => setTimeout(r, 5));
+    releases[n]();
+  }
+  await Promise.all([first, second]);
+  await idle(engine);
+  assert.deepEqual(sent, ["試聴一", "本番", "試聴二"]);
+});
+test("a preview that waited long enough keeps its place", async (t) => {
+  const { engine, store } = setup(t);
+  store.config.provider.type = "irodori";
+  const sent = [];
+  let release;
+  engine.options.fetchImpl = (url, init) => {
+    sent.push(JSON.parse(init.body).input);
+    return new Promise((r) => (release = () => r(new Response(mockWav()))));
+  };
+  const voice = store.config.voiceProfiles[0];
+  engine.ingress(event(engine, "a", "一番目"), "one");
+  await new Promise((r) => setTimeout(r, 5));
+  const preview = engine.preview("試聴", voice);
+  engine.queue[0].created -= PREVIEW_YIELD_MS;
+  engine.ingress(event(engine, "b", "二番目"), "one");
+  for (let n = 0; n < 3; n++) {
+    release();
+    for (let m = 0; m < 100 && sent.length <= n + 1 && n < 2; m++)
+      await new Promise((r) => setTimeout(r, 5));
+  }
+  await preview;
+  await idle(engine);
+  assert.deepEqual(sent, ["一番目", "試聴", "二番目"]);
 });
 test("accepted speech keeps its voice snapshot; next speech uses saved changes", async (t) => {
   const { engine, store } = setup(t);
@@ -367,6 +439,58 @@ async function httpApp(t) {
     });
   return { ...app, call, base };
 }
+test("audio follows the admin's delivery format; Opus only when the Player asks", async (t) => {
+  const a = await httpApp(t);
+  a.engine.connect({ source: fixtureSource, collectorId: "one" });
+  a.engine.accepting = true;
+  const accepted = a.engine.ingress(event(a.engine), "one");
+  await idle(a.engine);
+  const url = a.engine.orders.get(accepted.orderId).ready.audio.url;
+  const get = async (query = "") => {
+    const r = await a.call(url + query);
+    assert.equal(r.status, 200);
+    return {
+      type: r.headers.get("content-type"),
+      body: Buffer.from(await r.arrayBuffer()),
+    };
+  };
+  const original = await get();
+  assert.equal(original.type, "audio/wav");
+  const Opus = await loadOpus();
+  const opus = await get("?format=opus");
+  if (Opus) {
+    assert.equal(opus.type, "audio/ogg");
+    assert.equal(opus.body.toString("ascii", 0, 4), "OggS");
+  } else assert.deepEqual(opus.body, original.body);
+  const put = (b) => a.call("/api/v1/admin/audio-format", "PUT", b);
+  assert.equal(
+    (await put({ before: "opus64", audioFormat: "mp3" })).status,
+    422,
+  );
+  assert.equal(
+    (await put({ before: "wav", audioFormat: "wav256" })).status,
+    409,
+  );
+  assert.deepEqual(
+    await (await put({ before: "opus64", audioFormat: "wav256" })).json(),
+    { audioFormat: "wav256" },
+  );
+  for (const query of ["", "?format=opus"]) {
+    const small = await get(query);
+    assert.equal(small.type, "audio/wav");
+    assert.equal(inspectWav(small.body).sampleRateHz, 16000);
+  }
+  await put({ before: "wav256", audioFormat: "wav" });
+  assert.deepEqual((await get("?format=opus")).body, original.body);
+  // Encoded copies count toward storage and go with the original.
+  assert.ok(a.engine.audioBytes() > original.body.length);
+  for (const audio of a.engine.audio.values()) audio.retainUntil = 0;
+  a.engine.prune();
+  assert.deepEqual(
+    readdirSync(a.engine.audioDir).filter((f) => !f.startsWith(".")),
+    [],
+  );
+});
 function randomId() {
   return Math.random().toString(36).slice(2);
 }
