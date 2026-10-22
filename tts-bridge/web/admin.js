@@ -181,9 +181,10 @@ async function refresh() {
     }
     applyRuntimeView();
   }
-  const registrations = (d.voiceCommands ?? []).filter(
-    (x) => x.status === "failed",
-  );
+  const registrations = (d.voiceCommands ?? [])
+    .filter((x) => x.status === "failed")
+    .sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
+    .slice(0, 5);
   $("voiceCommandDiagnostics").replaceChildren(
     ...registrations.map((x) => {
       const item = document.createElement("p");

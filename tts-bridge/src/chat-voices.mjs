@@ -13,6 +13,7 @@ export function voiceCommand(text) {
   for (const [prefix, kind] of [
     ["（ブリッジ声登録）", "register"],
     ["（ブリッジ声削除）", "delete"],
+    ["（ブリッジ声解除）", "delete"],
   ]) {
     if (trimmed.startsWith(prefix))
       return { kind, caption: trimmed.slice(prefix.length).trim() };
@@ -20,7 +21,8 @@ export function voiceCommand(text) {
   return null;
 }
 const running = (job) =>
-  job && ["queued", "generating", "registering"].includes(job.status);
+  job &&
+  ["queued", "generating", "designing", "registering"].includes(job.status);
 
 export class ChatVoices {
   constructor(engine) {
@@ -175,6 +177,7 @@ export class ChatVoices {
         voice,
         provider: structuredClone(engine.config.provider),
         controller: new AbortController(),
+        designer: this.designer?.enabled() ? this.designer : null,
       };
       this.tasks.set(job.id, task);
       task.promise = this.run(task).finally(() => this.tasks.delete(job.id));
@@ -220,19 +223,21 @@ export class ChatVoices {
     }, 180000);
     waitTimer.unref();
     try {
-      const wav = await engine.preview(VOICE_CONFIRMATION, task.voice, {
-        registrationId: task.job.id,
-        provider: task.provider,
-        signal: task.controller.signal,
-        onStart: () => {
-          clearTimeout(waitTimer);
-          this.valid(task);
-          records.update(task.job.id, { status: "generating" });
-          this.changed();
-        },
-      });
+      const wav = task.designer
+        ? await task.designer.run(task, () => this.valid(task))
+        : await engine.preview(VOICE_CONFIRMATION, task.voice, {
+            registrationId: task.job.id,
+            provider: task.provider,
+            signal: task.controller.signal,
+            onStart: () => {
+              clearTimeout(waitTimer);
+              this.valid(task);
+              records.update(task.job.id, { status: "generating" });
+              this.changed();
+            },
+          });
       this.valid(task);
-      const audio = engine.saveAudio(wav);
+      const audio = task.designer ? null : engine.saveAudio(wav);
       stage = "register";
       task.referenceId = `chat-${task.job.id}`;
       records.update(task.job.id, {
@@ -273,12 +278,13 @@ export class ChatVoices {
           status: "completed",
           reason: "",
           note: "",
-          unplayed: !engine.accepting,
+          unplayed: !task.designer && !engine.accepting,
         });
       });
       this.changed();
       stage = "play";
       if (
+        !task.designer &&
         !this.closed &&
         engine.accepting &&
         records.get(task.job.id)?.status === "completed"
@@ -291,7 +297,9 @@ export class ChatVoices {
       else {
         const reason =
           stage === "generate"
-            ? "音声を生成できませんでした。TTSの状態を確認して再試行してください。"
+            ? task.designer
+              ? "Discordでの声づくりを終了しました。Botの接続・権限・TTSを確認し、必要ならVTTから再度登録してください。"
+              : "音声を生成できませんでした。TTSの状態を確認して再試行してください。"
             : stage === "register"
               ? "参照音声を登録できませんでした。管理画面で確認してください。"
               : "声の設定を保存できませんでした。管理画面で確認してください。";
@@ -315,6 +323,7 @@ export class ChatVoices {
       }
     } finally {
       clearTimeout(waitTimer);
+      await task.designFinish?.(records.get(task.job.id));
     }
   }
   reconcile() {

@@ -110,6 +110,7 @@ export async function refreshCharacters(roomId = room) {
         const labels = {
           queued: "生成待ち",
           generating: "生成中",
+          designing: "Discordで声をデザイン中",
           registering: "登録中",
         };
         const label =

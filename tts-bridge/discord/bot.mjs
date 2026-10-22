@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { Playback } from "../web/playback.js";
 import { toDiscordPcm } from "./pcm.mjs";
 import { discordRequire } from "./dependencies.mjs";
+import { VoiceDesign } from "./voice-design.mjs";
 
 export async function loadDependencies() {
   const discord = discordRequire("discord.js");
@@ -32,6 +33,7 @@ export async function createBot({
   greeting = async () => null,
   onError = () => {},
   timeouts = {},
+  designSettings = () => ({ enabled: false }),
 }) {
   const d = deps ?? (await loadDependencies());
   const limits = {
@@ -44,6 +46,12 @@ export async function createBot({
   };
   const client = new d.Client({
     intents: [d.GatewayIntentBits.Guilds, d.GatewayIntentBits.GuildVoiceStates],
+  });
+  const design = new VoiceDesign({
+    client,
+    engine,
+    settings: designSettings,
+    report: onError,
   });
   const player = d.createAudioPlayer();
   let connection,
@@ -361,6 +369,7 @@ export async function createBot({
   async function close() {
     if (closed) return;
     closed = true;
+    design.close();
     lifetime.abort();
     await disconnect({ farewell: true });
     engine.off("notification", notify);
@@ -404,6 +413,34 @@ export async function createBot({
   }
   cleanupLogin();
   return {
+    designVoice: (task, valid) => design.open(task, valid),
+    cancelDesigns: () => design.cancel(),
+    textChannels: async () => {
+      const result = [];
+      for (const guild of client.guilds.cache.values()) {
+        const me = guild.members.me;
+        for (const channel of guild.channels.cache.values()) {
+          if (channel.type !== 0) continue;
+          result.push({
+            guildId: guild.id,
+            guildName: guild.name,
+            channelId: channel.id,
+            channelName: channel.name,
+            canSend:
+              !!me &&
+              !!channel
+                .permissionsFor(me)
+                ?.has([
+                  d.PermissionFlagsBits.ViewChannel,
+                  d.PermissionFlagsBits.SendMessages,
+                  d.PermissionFlagsBits.AttachFiles,
+                  d.PermissionFlagsBits.ReadMessageHistory,
+                ]),
+          });
+        }
+      }
+      return result;
+    },
     connect,
     disconnect,
     close,
@@ -413,7 +450,7 @@ export async function createBot({
       error,
       botName: client.user?.tag ?? "",
       inviteUrl: client.user
-        ? `https://discord.com/oauth2/authorize?client_id=${client.user.id}&scope=bot&permissions=3146752`
+        ? `https://discord.com/oauth2/authorize?client_id=${client.user.id}&scope=bot&permissions=3247104`
         : "",
     }),
   };
