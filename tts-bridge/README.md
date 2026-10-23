@@ -2,6 +2,7 @@
 
 Bridgeの動きと設定の詳しい仕様です。Node.js **22.13以上** が必要で、`main.mjs` で起動します。依存はWebSocketの `ws` だけで、設定・認証・発言台帳はNode組み込みのSQLiteに保存します。
 
+- よくある質問と音声トラブル：[FAQ](../docs/faq.md)
 - 構成と、音声担当者・参加者それぞれの操作：[セットアップガイド](../docs/setup-guide.md)
 - ソースからの起動と、実行ファイルのビルド：[ソースからのビルドと起動](../docs/build.md)
 - Discord Botの準備：[Discordでの利用方法](../docs/discord.md)

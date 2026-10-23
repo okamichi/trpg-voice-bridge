@@ -24,6 +24,7 @@ FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当�
 - [Bridgeの設定と動きの詳細](tts-bridge/README.md)
 - [音声をDiscordで流す場合](docs/discord.md)
 - [別のPCの参加者にPlayerを公開する場合](docs/online.md)
+- [よくある質問・音声トラブルと設定の調整](docs/faq.md)
 
 ### TRPG-Voice-Bridge の紹介
 
