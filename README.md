@@ -31,7 +31,7 @@ https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
 ### クイックスタートガイド
 
-https://github.com/user-attachments/assets/203a1004-4932-47b9-8517-37cf0cb7ecb7
+https://github.com/user-attachments/assets/f966a54c-3858-4a38-a826-e887b3212dc1
 
 ## Irodori-TTS-Server について
 
