@@ -14,6 +14,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { SpeechModels } from "./models.mjs";
 import { RuntimeSettings, exposed } from "./settings.mjs";
+import { ReferenceVoices } from "../reference-voices.mjs";
 
 // Windows' STATUS_DLL_NOT_FOUND. The Vulkan build cannot start without the
 // Vulkan loader, vulkan-1.dll, which GPU drivers install.
@@ -49,6 +50,7 @@ export class SpeechRuntime {
     this.status =
       this.settings.active.mode === "external" ? "external" : "stopped";
     this.error = "";
+    this.references = new ReferenceVoices(fetch, dataDir);
   }
   snapshot() {
     return {
@@ -66,7 +68,7 @@ export class SpeechRuntime {
     return this.settings.active.mode === "bundled"
       ? {
           ...saved,
-          type: "irodori",
+          type: "speech",
           baseUrl: `http://127.0.0.1:${this.settings.active.ttsPort}`,
         }
       : saved;
@@ -110,9 +112,6 @@ export class SpeechRuntime {
       // A chosen Vulkan build fails without a GPU instead of silently running
       // on the CPU, which cannot speak a line within seconds.
       ...(vulkan ? ["--device", "gpu"] : []),
-      "--irodori-compatible",
-      "--voices-dir",
-      join(this.dataDir, "voices"),
     ];
   }
   async acquire() {
@@ -233,6 +232,20 @@ export class SpeechRuntime {
             !this.closing &&
             this.status === "starting"
           ) {
+            try {
+              await this.references.prepare(
+                this.provider({}),
+                AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+              );
+            } catch (e) {
+              if (!this.closing) {
+                this.fail(`参照音声の復元に失敗しました: ${e.message}`);
+                this.helper.stdin.write("T");
+              }
+              return;
+            }
+            if (this.closing || !this.childAlive || this.status !== "starting")
+              return;
             this.status = "ready";
             this.log("ready");
             return;
@@ -252,6 +265,7 @@ export class SpeechRuntime {
   }
   async close() {
     this.closing = true;
+    await this.references.close();
     await this.models.close();
     if (!this.helper) return;
     this.helper.stdin.end("Q");

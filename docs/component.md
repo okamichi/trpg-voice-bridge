@@ -70,11 +70,11 @@ flowchart LR
 
 | | 外部TTS | 内蔵TTS |
 | --- | --- | --- |
-| 中身 | Bridgeとは別に起動した Irodori-TTS-Server か speech.cpp（フォーク版） | アプリに同梱した speech.cpp（フォーク版） |
+| 中身 | Bridgeとは別に起動した Irodori-TTS-Server、speech.cpp本家、互換フォーク | アプリに同梱した speech.cpp本家 |
 | 起動 | 別のターミナルで自分で起動・停止する | Bridgeが起動・停止する |
 | 使える起動方法 | ソースから（`npm start`）でも、ダウンロードしたアプリでも | ダウンロードしたアプリ（または自分で作った実行ファイル）だけ。`npm start` では使えない |
-| 設定 | 管理画面「1 TTSの準備」の「Irodori接続先」（既定 `http://127.0.0.1:8088`） | 管理画面「1 TTSの準備」→「TTSの起動設定」で起動方式を「内蔵speech.cpp」にし、モデルをダウンロードする。Windowsは「Vulkan」（GPUあり）か「CPU」 |
-| 参照音声の保存先 | 外部TTSの側（speech.cppなら `--voices-dir`） | Bridgeの保存先の `voices/` |
+| 設定 | 管理画面「1 TTSの準備」の「TTS接続先」で種類とURLを指定（既定 `http://127.0.0.1:8088`） | 管理画面「1 TTSの準備」→「TTSの起動設定」で起動方式を「内蔵speech.cpp」にし、モデルをダウンロードする。Windowsは「Vulkan」（GPUあり）か「CPU」 |
+| 参照音声の保存先 | Bridge経由で登録した元WAVはBridgeの `voices/`。Irodoriは自身の保存機能も使う | Bridgeの保存先の `voices/`。起動時にTTSへ復元する |
 
 - どちらも、外に公開しません。内蔵TTSは `127.0.0.1` だけで待ち受けます。外部TTSも `--host 127.0.0.1` で起動します。
 - 読み上げを使わず文字のチャットだけなら、TTSは要りません。TTSが未接続でも、チャット本文は届きます。

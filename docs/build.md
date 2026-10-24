@@ -7,7 +7,7 @@
 |            | A. `npm start` で起動する                                       | B. 実行ファイルを作って起動する                                      |
 | ---------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
 | 音声生成   | 別に起動した外部TTS（Irodori-TTS-Serverかspeech.cpp）に接続する | speech.cppを同梱する。管理画面で内蔵TTSと外部TTSを切り替えられる     |
-| 必要なもの | Node.js 22.13以上                                               | Node.js 24.22.0、CMake、C++のビルド環境（macOS arm64 / Windows x64） |
+| 必要なもの | Node.js 22.13以上                                               | Node.js 24.22.1、CMake、C++のビルド環境（macOS arm64 / Windows x64） |
 | 読む節     | 2 → 4 → 6（外部TTSにspeech.cppを使う場合は3も）                 | 2 → 3 → 5 → 6                                                        |
 
 `npm start` で開いた管理画面には、内蔵TTSの設定（「TTSの起動設定」）は表示されません。内蔵TTSを使う場合はBを選んでください。
@@ -34,7 +34,7 @@ npm --prefix discord ci
 
 Bでは、Node.jsについて次の2点も必要です。
 
-- 版は [`packaging/node-version`](../tts-bridge/packaging/node-version) の **24.22.0** と同じにしてください。違う版ではビルドが止まります。
+- 版は [`packaging/node-version`](../tts-bridge/packaging/node-version) の **24.22.1** と同じにしてください。違う版ではビルドが止まります。
 - nodejs.orgの公式配布物を使ってください。ビルドは、Node.js本体と一緒にある `LICENSE` をパッケージへコピーします。見つからないとビルドが止まります。
 
 ## 3. speech.cppをビルドする
@@ -113,17 +113,18 @@ uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8088
 
 ```sh
 # macOS
-./.packaging/speech-runtime/speech serve "<GGUFの絶対パス>" --host 127.0.0.1 --port 8088 --irodori-compatible --voices-dir ./external-voices
+./.packaging/speech-runtime/speech serve "<GGUFの絶対パス>" --host 127.0.0.1 --port 8088
 ```
 
 ```powershell
 # Windows（CPU版）
-.\.packaging\speech-runtime\speech.exe serve '<GGUFの絶対パス>' --host 127.0.0.1 --port 8088 --irodori-compatible --voices-dir ./external-voices
+.\.packaging\speech-runtime\speech.exe serve '<GGUFの絶対パス>' --host 127.0.0.1 --port 8088
 ```
 
 - WindowsでVulkan版を使う場合は、`speech-vulkan.exe` に替えて `--device gpu` を付けてください。
-- 参照音声は `tts-bridge/external-voices/` に保存されます。
-- macOS arm64とWindows x64以外では、[okamichi/speech.cpp](https://github.com/okamichi/speech.cpp) の手順でビルドしてください。
+- 管理画面の「TTS接続先」で「speech.cpp（本家）」を選んでください。参照音声はBridgeの保存先の `voices/` と `reference-voices.json` で管理し、TTS再起動後は不足分を再登録します。
+- 別PCの本家を利用する場合は、両端が同じポートのSSH転送を使います（例: `ssh -N -L 8088:127.0.0.1:8088 user@tts-host`）。
+- macOS arm64とWindows x64以外では、[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp) の手順でビルドしてください。
 
 ### Bridgeを起動する
 
@@ -136,7 +137,7 @@ npm start
 1. 端末に表示される**管理用リンク**を開きます。このリンクは共有しないでください。出力をファイルへリダイレクトすると、リンクは表示されません。
 2. 「1 TTSの準備」の「接続テスト」を押し、「接続状態」のTTSサーバーが「接続済み」になることを確かめます。
 
-接続先の既定は `http://127.0.0.1:8088` です。TTSを別のアドレスやポートで起動した場合は、「Irodori接続先」で変えて「接続先を保存」を押してください。外部TTSの起動・停止・モデルの変更は、そのTTSを起動した端末で行います。
+接続先の既定は `http://127.0.0.1:8088` です。「TTS接続先」で種類を選び、別のアドレスやポートで起動した場合はURLも変えて「接続先を保存」を押してください。外部TTSの起動・停止・モデルの変更は、そのTTSを起動した端末で行います。
 
 続けて6節へ進んでください。
 
@@ -189,7 +190,7 @@ npm run package:smoke
 - モデルの保存先は「保存先」で変えられます。Bridgeのデータの保存先とは別です。
 - 内蔵TTSのポートの既定は **18088** です。Bridgeの8090や、4節の例の8088とは別です。
 - Windowsのspeech.cppはAVX2に対応したCPUが必要です。Vulkan版には、Vulkanに対応したGPUとドライバーも必要です。Vulkan版でエラーになる場合は、CPU版にして保存し、「Bridgeを再起動」を押してください。CPU版は生成に時間がかかることがあります。
-- 外部TTSに戻すには、起動方式を「外部サーバー」にして保存し、「Bridgeを再起動」を押します。「Irodori接続先」の設定は残っています。
+- 外部TTSに戻すには、起動方式を「外部サーバー」にして保存し、「Bridgeを再起動」を押します。「TTS接続先」の設定は残っています。
 
 ## 6. 管理画面で卓の準備をする
 

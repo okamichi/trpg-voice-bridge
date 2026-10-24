@@ -1,12 +1,12 @@
 {
   "speech": {
-    "repository": "okamichi/speech.cpp",
-    "commit": "618cd0644dc72703d0bac2eb6e8e7495c14b1d0c",
-    "sha256": "6887e6010a8db5ec5fa910d7a9e2c2e740e271f192cd3e8fc695f767c1b9551d"
+    "repository": "nyosegawa/speech.cpp",
+    "commit": "d074e1b9d84fe5ec530c959292ffe3d94ffd288b",
+    "sha256": "a50ed44d04aa7e1d01e8a457682ab7f9425303863a1fffc15442d4a5f761b6ee"
   },
   "ggml": {
     "repository": "nyosegawa/ggml",
-    "commit": "a655cf6910770404213bc338e622cd82b08ca277",
-    "sha256": "c586f0a4210af90f72c4c4cf29c39ea1ebd55438eeaa5322a900b21a49b70260"
+    "commit": "cbdeccfd49ec9c702c175c273d36c47520cf4710",
+    "sha256": "03f751738259e0c0a8a6a98b15934afee8e6768aa21c815f75eb4a5a2ad40b50"
   }
 }

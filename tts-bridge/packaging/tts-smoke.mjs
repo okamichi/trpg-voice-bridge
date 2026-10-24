@@ -7,6 +7,8 @@ import {
   readFileSync,
   renameSync,
   existsSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -99,7 +101,11 @@ async function start() {
   child.stderr.on("data", (b) => (output += b));
   child.done = new Promise((r) => child.once("close", r));
   await until(async () => {
-    assert.equal(child.exitCode, null);
+    assert.equal(
+      child.exitCode,
+      null,
+      `Packaged Bridge exited before listening: ${output.replace(/#(?:access|admin)=[^\s]+|Bearer \S+/g, "[redacted]")}`,
+    );
     try {
       return (await fetch(`${base}/healthz`)).ok;
     } catch {
@@ -137,6 +143,33 @@ async function stop(force = false) {
       return true;
     }
   }, 15000);
+  if (force) {
+    // Closing the TTS socket precedes the guardian's final child reap and lock
+    // release. Probe the actual lock instead of racing the next Bridge start.
+    await until(async () => {
+      const probe = spawn(
+        join(
+          packageDir,
+          "runtime/speech",
+          `bridge-supervisor${process.platform === "win32" ? ".exe" : ""}`,
+        ),
+        [join(dataDir, "bridge.lock")],
+        { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
+      );
+      let events = "";
+      probe.stdout.on("data", (b) => {
+        events += b;
+      });
+      probe.stdin.on("error", () => {});
+      const done = new Promise((resolve, reject) => {
+        probe.once("error", reject);
+        probe.once("close", resolve);
+      });
+      probe.stdin.end("Q");
+      await done;
+      return events.includes('"event":"locked"');
+    }, 15000);
+  }
   if (!force) assert.equal(child.exitCode, 0);
   child = undefined;
 }
@@ -165,11 +198,22 @@ try {
   await start();
   await ready();
   const wav = await preview("none");
-  const references = new ReferenceVoices(fetch);
-  const provider = { type: "irodori", baseUrl: `http://127.0.0.1:${ttsPort}` };
+  const references = new ReferenceVoices(fetch, dataDir);
+  const provider = { type: "speech", baseUrl: `http://127.0.0.1:${ttsPort}` };
   await references.register({ provider, voiceId: "package-smoke", wav });
+  references.store.save("deleted-smoke", wav);
+  unlinkSync(join(dataDir, "voices/deleted-smoke.wav"));
+  writeFileSync(join(dataDir, "voices/broken-smoke.wav"), "broken WAV");
   await references.close();
   assert.ok(existsSync(join(dataDir, "voices/package-smoke.wav")));
+  // The running server still owns its copy even if Bridge loses its backup.
+  unlinkSync(join(dataDir, "voices/package-smoke.wav"));
+  const withoutBackup = await (
+    await api("providers/irodori-local/voices")
+  ).json();
+  assert.ok(withoutBackup.some((v) => v.id === "package-smoke"));
+  await preview("package-smoke");
+  writeFileSync(join(dataDir, "voices/package-smoke.wav"), wav);
   await stop();
   const moved = join(dir, "展開先を変更 moved");
   renameSync(packageDir, moved);
@@ -178,6 +222,40 @@ try {
   await ready();
   const voices = await (await api("providers/irodori-local/voices")).json();
   assert.ok(voices.some((v) => v.id === "package-smoke"));
+  assert.ok(
+    !voices.some((v) => ["deleted-smoke", "broken-smoke"].includes(v.id)),
+  );
+  const diagnostics = await (await api("diagnostics")).json();
+  assert.deepEqual(
+    new Set(diagnostics.referenceVoices.map((p) => p.id)),
+    new Set(["deleted-smoke", "broken-smoke"]),
+  );
+  const ledger = join(dataDir, "reference-voices.json"),
+    originalLedger = readFileSync(ledger, "utf8");
+  try {
+    writeFileSync(ledger, "{ broken");
+    const broken = await (await api("diagnostics")).json();
+    assert.equal(broken.tts.status, "ready");
+    assert.equal(broken.referenceVoices[0].kind, "ledger");
+    assert.equal(readFileSync(ledger, "utf8"), "{ broken");
+  } finally {
+    writeFileSync(ledger, originalLedger);
+  }
+  const missing = diagnostics.referenceVoices.find(
+    (p) => p.id === "deleted-smoke",
+  );
+  await api("reference-voices/resolve", {
+    action: "forget",
+    id: missing.id,
+    sha256: missing.sha256,
+    before: diagnostics.referenceProvider,
+    confirm: true,
+  });
+  assert.ok(
+    !(await (await api("diagnostics")).json()).referenceVoices.some(
+      (p) => p.id === "deleted-smoke",
+    ),
+  );
   await preview("package-smoke");
   await stop(true); // Abrupt Bridge death must also collect speech.cpp.
   await start();
@@ -190,7 +268,7 @@ try {
     /http|#access|token|Bearer/,
   );
   console.log(
-    "PASS: local-model generation, persistent voices after relocation/restart, normal and abrupt child cleanup, secret-free logs",
+    "PASS: local-model generation, persistence, missing-backup remote use, detach, corrupt-ledger diagnostics, restart/relocation, child cleanup and secret-free logs",
   );
 } finally {
   if (child && child.exitCode === null && child.signalCode === null)
