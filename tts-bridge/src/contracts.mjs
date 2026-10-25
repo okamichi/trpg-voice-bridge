@@ -215,7 +215,7 @@ export function configSchema(c) {
   );
   check(
     c.provider.model === "irodori-tts" &&
-      ["irodori", "mock"].includes(c.provider.type),
+      ["irodori", "speech", "mock"].includes(c.provider.type),
     "Provider設定が不正です",
   );
   check(

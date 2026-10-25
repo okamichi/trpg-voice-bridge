@@ -1,10 +1,301 @@
 import { openStep } from "./admin-helpers.mjs";
 import { test, expect } from "@playwright/test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/http.mjs";
 import { SpeechRuntime } from "../src/runtime/speech.mjs";
+import { createServer } from "node:http";
+import { mockWav } from "../src/provider.mjs";
+
+for (const mode of ["bundled", "external"])
+  test(`${mode} speech displays live restoration counts and clears them on completion`, async ({
+    page,
+  }) => {
+    const dataDir = mkdtempSync(join(tmpdir(), "reference-progress-ui-"));
+    const names = new Set(["none", "already"]);
+    const tts = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify(
+          req.url === "/health"
+            ? { status: "ok" }
+            : {
+                data: [
+                  {
+                    id: "Irodori-TTS",
+                    speech: {
+                      task: "synthesis",
+                      voices: [...names].map((name) => ({ name })),
+                      options: [],
+                    },
+                  },
+                ],
+              },
+        ),
+      );
+    });
+    await new Promise((r) => tts.listen(0, "127.0.0.1", r));
+    const runtime = new SpeechRuntime({
+      dataDir,
+      runtimeDir: dataDir,
+      overrides: { mode, ttsPort: tts.address().port },
+      backends: ["metal"],
+    });
+    if (mode === "bundled") runtime.status = "starting";
+    const app = createApp({
+      dataDir,
+      runtime,
+      localOrigin: "http://127.0.0.1:0",
+      providerOptions: { resolveProvider: (saved) => runtime.provider(saved) },
+    });
+    app.store.change((c) => {
+      c.provider.type = "speech";
+      c.provider.baseUrl = `http://127.0.0.1:${tts.address().port}`;
+    });
+    const provider = app.engine.config.provider,
+      refs = mode === "bundled" ? runtime.references : app.engine.references;
+    refs.store.save("already", mockWav());
+    refs.store.bind("already", provider);
+    refs.store.save("new", mockWav());
+    refs.store.save("missing", mockWav());
+    unlinkSync(join(dataDir, "voices/missing.wav"));
+    let release, started, restoring;
+    const gate = new Promise((r) => {
+        release = r;
+      }),
+      waiting = new Promise((r) => {
+        started = r;
+      });
+    refs.fetch = async (url, init) => {
+      if (init?.method !== "POST") return fetch(url, init);
+      started();
+      await gate;
+      names.add(init.body.get("name"));
+      return Response.json({ held: {} });
+    };
+    await new Promise((r) => app.server.listen(0, "127.0.0.1", r));
+    try {
+      await page.goto(
+        app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
+      );
+      await openStep(page, "stepTts");
+      await expect(page.locator("#ttsState")).toHaveText(
+        mode === "bundled" ? "モデル読込中" : "接続済み",
+      );
+      restoring = refs.prepare(provider);
+      await waiting;
+      await page.reload();
+      await openStep(page, "stepTts");
+      await expect(page.locator("#ttsState")).toHaveText(
+        "参照音声復元中 1/3 件",
+      );
+      await expect(page.locator("#referenceProgress")).toHaveText(
+        "参照音声復元中 1/3 件",
+      );
+      await expect(page.locator("#connection")).toContainText(
+        "参照音声復元中 1/3 件",
+      );
+      if (mode === "bundled")
+        await expect(page.locator("#runtimeStatus")).toContainText(
+          "参照音声復元中 1/3 件",
+        );
+      release();
+      await restoring;
+      expect(refs.progress(provider)).toEqual({
+        state: "completed",
+        completed: 3,
+        total: 3,
+        failed: 1,
+      });
+      if (mode === "bundled") runtime.status = "ready";
+      await page.reload();
+      await openStep(page, "stepTts");
+      await expect(page.locator("#ttsState")).toHaveText(
+        mode === "bundled" ? "準備完了" : "接続済み",
+      );
+      await expect(page.locator("#referenceProgress")).toBeHidden();
+      await expect(page.locator("#referenceIssues")).toContainText("missing");
+    } finally {
+      release();
+      await restoring?.catch(() => {});
+      await page.context().close();
+      await app.close();
+      await runtime.close();
+      await new Promise((r) => tts.close(r));
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+test("external native speech selection is saved and diagnostics use its model list", async ({
+  page,
+}) => {
+  const dataDir = mkdtempSync(join(tmpdir(), "native-speech-ui-"));
+  let modelsRead = 0;
+  const tts = createServer((req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    if (req.url === "/health") res.end(JSON.stringify({ status: "ok" }));
+    else if (req.url === "/v1/models") {
+      modelsRead++;
+      res.end(
+        JSON.stringify({
+          data: [
+            {
+              id: "Irodori-TTS-v4.1-Anime",
+              speech: {
+                task: "synthesis",
+                voices: [{ name: "none" }, { name: "saved" }],
+                options: [],
+              },
+            },
+          ],
+        }),
+      );
+    } else res.end(JSON.stringify({ data: [] }));
+  });
+  await new Promise((r) => tts.listen(0, "127.0.0.1", r));
+  const app = createApp({ dataDir, localOrigin: "http://127.0.0.1:0" });
+  await new Promise((r) => app.server.listen(0, "127.0.0.1", r));
+  try {
+    await page.goto(
+      app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
+    );
+    await openStep(page, "stepTts");
+    await page.locator("#providerType").selectOption("speech");
+    await page
+      .locator("#providerUrl")
+      .fill(`http://127.0.0.1:${tts.address().port}`);
+    await page.getByRole("button", { name: "接続先を保存" }).click();
+    await expect.poll(() => app.store.config.provider.type).toBe("speech");
+    await expect.poll(() => modelsRead).toBeGreaterThan(0);
+    await page.reload();
+    await openStep(page, "stepTts");
+    await expect(page.locator("#providerType")).toHaveValue("speech");
+    const response = await page.request.get(
+      app
+        .adminUrl()
+        .replace(":0/", `:${app.server.address().port}/`)
+        .split("/admin")[0] + "/api/v1/admin/diagnostics",
+      { headers: { Authorization: `Bearer ${app.store.secrets.admin}` } },
+    );
+    expect((await response.json()).tts.model).toBe("Irodori-TTS-v4.1-Anime");
+    app.engine.references.store.save("saved", mockWav());
+    const base = `http://127.0.0.1:${app.server.address().port}`;
+    const headers = {
+      Authorization: `Bearer ${app.store.secrets.admin}`,
+      "Content-Type": "application/json",
+    };
+    const listed = await fetch(
+      `${base}/api/v1/admin/providers/irodori-local/voices`,
+      { headers },
+    );
+    expect((await listed.json()).map((v) => v.id)).toEqual(["none"]);
+    const [issue] = app.engine.references.diagnostics(
+      app.engine.config.provider,
+    );
+    const body = {
+      action: "adopt",
+      id: issue.id,
+      sha256: issue.sha256,
+      before: app.engine.config.provider,
+      confirm: true,
+    };
+    const resolve = (data, h = headers) =>
+      fetch(`${base}/api/v1/admin/reference-voices/resolve`, {
+        method: "POST",
+        headers: h,
+        body: JSON.stringify(data),
+      });
+    expect([401, 403]).toContain(
+      (await resolve(body, { "Content-Type": "application/json" })).status,
+    );
+    expect((await resolve({ ...body, confirm: false })).status).toBe(422);
+    expect((await resolve({ ...body, before: {} })).status).toBe(409);
+    await page.reload();
+    await expect(page.locator("#referenceRecovery")).toBeVisible();
+    await expect(page.locator("#referenceIssues")).toContainText("saved");
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page
+      .getByRole("button", { name: "同じ音声と確認して紐付け" })
+      .click();
+    expect(
+      app.engine.references.store.bound("saved", app.engine.config.provider),
+    ).toBe(false);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: "同じ音声と確認して紐付け" })
+      .click();
+    await expect(page.locator("#referenceRecovery")).toBeHidden();
+    expect(
+      app.engine.references.store.bound("saved", app.engine.config.provider),
+    ).toBe(true);
+    unlinkSync(join(dataDir, "voices/saved.wav"));
+    await page.reload();
+    await expect(page.locator("#referenceIssues")).toContainText(
+      "WAVがありません",
+    );
+    const listedWithoutBackup = await fetch(
+      `${base}/api/v1/admin/providers/irodori-local/voices`,
+      { headers },
+    );
+    expect((await listedWithoutBackup.json()).map((v) => v.id)).toContain(
+      "saved",
+    );
+    const forget = { ...body, action: "forget" };
+    expect((await resolve({ ...forget, confirm: false })).status).toBe(422);
+    expect((await resolve({ ...forget, sha256: "stale" })).status).toBe(409);
+    expect((await resolve({ ...forget, before: {} })).status).toBe(409);
+    expect([401, 403]).toContain(
+      (await resolve(forget, { "Content-Type": "application/json" })).status,
+    );
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page
+      .getByRole("button", { name: "管理対象から外す", exact: true })
+      .click();
+    expect(
+      Object.hasOwn(app.engine.references.store.read().voices, "saved"),
+    ).toBe(true);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: "管理対象から外す", exact: true })
+      .click();
+    await expect(page.locator("#referenceRecovery")).toBeHidden();
+    expect(
+      Object.hasOwn(app.engine.references.store.read().voices, "saved"),
+    ).toBe(false);
+    const ledger = join(dataDir, "reference-voices.json"),
+      backup = readFileSync(ledger, "utf8");
+    writeFileSync(ledger, "{ broken");
+    const diagnosis = await fetch(`${base}/api/v1/admin/diagnostics`, {
+      headers,
+    });
+    expect(diagnosis.status).toBe(200);
+    const state = await diagnosis.json();
+    expect(state.tts.model).toBe("Irodori-TTS-v4.1-Anime");
+    expect(state.referenceVoices[0].kind).toBe("ledger");
+    await page.reload();
+    await expect(page.locator("#referenceIssues")).toContainText(
+      "reference-voices.json",
+    );
+    await expect(page.locator("#connection")).toContainText("接続済み");
+    expect(readFileSync(ledger, "utf8")).toBe("{ broken");
+    writeFileSync(ledger, backup);
+    await page.reload();
+    await expect(page.locator("#referenceRecovery")).toBeHidden();
+  } finally {
+    await page.context().close();
+    await app.close();
+    await new Promise((r) => tts.close(r));
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
 
 test("bundled runtime UI saves restart settings while keeping active mode and external URL", async ({
   page,
@@ -42,6 +333,7 @@ test("bundled runtime UI saves restart settings while keeping active mode and ex
     await expect(page.locator("#providerNote")).toBeVisible();
     await expect(page.locator("#bundledFields")).toBeHidden();
     await expect(page.locator("#providerUrl")).toBeDisabled();
+    await expect(page.locator("#providerType")).toBeDisabled();
     await expect(page.locator("#providerUrl")).toHaveValue(
       app.store.config.provider.baseUrl,
     );

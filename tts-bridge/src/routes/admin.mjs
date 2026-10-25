@@ -11,6 +11,7 @@ import {
 import { json, body } from "../http-util.mjs";
 import { DEFAULT_SENTENCE_PAUSE_MS } from "../engine.mjs";
 import { DEFAULT_SENTENCE_SPLIT_THRESHOLD_CHARS } from "../sentences.mjs";
+import { speechModel } from "../tts-api.mjs";
 
 /** Everything under /api/v1/admin/. Requires the admin cookie or token on the local URL. */
 export async function adminRoutes(ctx, req, res, url) {
@@ -114,6 +115,7 @@ export async function adminRoutes(ctx, req, res, url) {
       store.change((c) => {
         store.compare(c.provider, b.before);
         c.provider.baseUrl = b.baseUrl;
+        c.provider.type = b.type ?? c.provider.type;
         store.voiceCommands.cancel(null, "TTS接続先の変更で中断しました");
       });
       engine.chatVoices.reconcile();
@@ -257,6 +259,34 @@ export async function adminRoutes(ctx, req, res, url) {
       setImmediate(() => onShutdown());
       return;
     }
+    if (
+      path === "/api/v1/admin/reference-voices/resolve" &&
+      method === "POST"
+    ) {
+      const b = await body(req);
+      const provider = structuredClone(engine.config.provider);
+      const before = () => store.compare(engine.config.provider, b.before);
+      before();
+      check(
+        ["retry", "adopt", "forget"].includes(b.action),
+        "参照音声の操作が不正です",
+      );
+      if (b.action === "adopt") {
+        check(b.confirm === true, "同じ音声であることの確認が必要です");
+        await engine.references.adopt(provider, b.id, b.sha256, before);
+      } else if (b.action === "forget") {
+        check(b.confirm === true, "管理対象から外す確認が必要です");
+        check(
+          runtime?.status !== "starting",
+          "内蔵TTSの起動が終わってから再試行してください",
+          409,
+        );
+        await engine.references.forget(b.id, b.sha256, before);
+      } else await engine.references.prepare(provider);
+      return json(res, 200, {
+        issues: engine.references.diagnostics(provider),
+      });
+    }
     if (path === "/api/v1/admin/diagnostics" && method === "GET") {
       let tts;
       try {
@@ -270,7 +300,10 @@ export async function adminRoutes(ctx, req, res, url) {
           });
           check(r.ok, "TTS診断失敗", 502);
           const h = await r.json();
-          tts = { status: h.status, model: h.model, runtime: h.runtime };
+          if (engine.config.provider.type === "speech") {
+            const model = await speechModel(engine.config.provider);
+            tts = { status: h.status, model: model.id };
+          } else tts = { status: h.status, model: h.model, runtime: h.runtime };
         }
       } catch (e) {
         tts = { status: "unreachable", error: e.message };
@@ -285,6 +318,9 @@ export async function adminRoutes(ctx, req, res, url) {
         degraded: engine.degraded,
         lastError: engine.lastError,
         voiceCommands: store.voiceCommands.diagnostics(),
+        referenceVoices: engine.references.diagnostics(engine.config.provider),
+        referenceProvider: engine.config.provider,
+        referenceProgress: engine.references.progress(engine.config.provider),
         pending: engine.queue.length,
         busy: engine.busy,
         audioBytes: engine.audioBytes(),

@@ -34,6 +34,14 @@
       <p id="failure"></p>
       <button id="recover">Irodori側の処理終了を確認して復帰</button>
     </section>
+    <section id="referenceRecovery" hidden>
+      <h2>参照音声の確認が必要です</h2>
+      <p>
+        元のWAVや接続先を確認してください。WAVが欠けていても、登録済みと確認できる接続先の音声は使えます。修正した後に復元を再試行するか、不要な記録を管理対象から外してください。
+      </p>
+      <div id="referenceIssues"></div>
+      <button id="retryReferences">再確認・復元</button>
+    </section>
     <!-- Added by admin.js only when this Bridge can restart itself. -->
     <template id="startupTemplate">
       <details class="step" id="stepStartup">
@@ -99,6 +107,7 @@
         ><span class="state" id="ttsState"></span>
       </summary>
       <div class="step-body">
+        <p id="referenceProgress" role="status" hidden></p>
         <div class="part" id="runtimeSection" hidden>
           <h3>TTSの起動設定</h3>
           <p id="runtimeStatus"></p>
@@ -185,8 +194,17 @@
           </p>
         </div>
         <div class="part" id="providerSection">
-          <h3>Irodori接続先</h3>
+          <h3>TTS接続先</h3>
           <form id="providerForm">
+            <label
+              >サーバーの種類<select id="providerType">
+                <option value="irodori">
+                  Irodori-TTS-Server / speech.cpp互換フォーク
+                </option>
+                <option value="speech">speech.cpp（本家）</option>
+                <option value="mock" hidden>モック</option>
+              </select></label
+            >
             <label
               >接続先URL<input id="providerUrl" type="url" required /></label
             ><button>接続先を保存</button

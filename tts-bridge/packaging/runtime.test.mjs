@@ -99,6 +99,8 @@ test("the Vulkan build runs on the GPU and a missing loader is named", () => {
     const cpu = start("cpu");
     assert.match(cpu[2], /[\\/]speech(\.exe)?$/);
     assert.ok(!cpu.includes("--device"));
+    assert.ok(!cpu.includes("--irodori-compatible"));
+    assert.ok(!cpu.includes("--voices-dir"));
     assert.match(stopMessage(0xc0000135, "vulkan"), /Vulkanが見つかりません/);
     assert.match(stopMessage(1, "vulkan"), /停止.*CPU/);
     assert.doesNotMatch(stopMessage(0xc0000135, "cpu"), /Vulkan/);
@@ -130,7 +132,7 @@ test("effective bundled provider never overwrites the external provider and gate
     },
   });
   try {
-    assert.equal(app.engine.config.provider.type, "irodori");
+    assert.equal(app.engine.config.provider.type, "speech");
     assert.equal(app.engine.config.provider.baseUrl, "http://127.0.0.1:18088");
     assert.deepEqual(app.store.config.provider, initial.provider);
     assert.throws(

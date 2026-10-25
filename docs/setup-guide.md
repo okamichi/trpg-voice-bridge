@@ -48,7 +48,7 @@ VTTを開いてChatterのアイコンを押し、管理者から受け取った�
 | 管理画面    | 音声担当者のブラウザで、Bridgeの `/admin/` | 接続状態の確認、読み上げの開始・停止、参加URLの発行                                                                   |
 | Player      | 参加者のブラウザで、Bridgeの `/player/`    | キャラチャット・音声再生・声設定を行う                                                                            |
 | Chatter     | 参加者のChromeサイドパネル | VTTにチャット機能を追加する。キャラチャット・声設定・音声再生を行う。Collector不要 |
-| TTS         | 音声担当者のPC                             | セリフの音声（WAV）を作る。別に起動したIrodori-TTS-Serverかspeech.cpp（フォーク版）、またはアプリに同梱したspeech.cpp |
+| TTS         | 音声担当者のPC                             | セリフの音声（WAV）を作る。別に起動したIrodori-TTS-Serverかspeech.cpp、またはアプリに同梱した本家speech.cpp |
 | Discord Bot | Discordのボイスチャンネル                  | Bridgeが作った音声をボイスチャンネルで流す。使う場合だけ                                                              |
 
 管理画面とPlayerは、どちらもBridgeが出すWebページです。別のサーバーを起動する必要はありません。
@@ -205,9 +205,10 @@ TTS_DATA_DIR=~/trpg/campaign-a/data TTS_CONFIG_FILE=~/trpg/campaign-a/config.jso
 - `bridge.sqlite`：設定・キャラ・声・紐付け・入力元・認証情報・発言の記録
 - `audio/`：一時的なWAV
 - `discord.json`：Discordの設定
-- `runtime.json`、`voices/`：内蔵TTSの起動設定と参照音声（アプリの場合）
+- `runtime.json`：内蔵TTSの起動設定（アプリの場合）
+- `voices/`、`reference-voices.json`：Bridgeが登録した参照音声の元WAVと、接続先への登録記録
 
-外部TTSを使う場合は、TTS側の参照音声の保存先（speech.cppの `--voices-dir` など）も卓ごとに分けることをおすすめします。内蔵TTSの参照音声は保存先の `voices/` に入るので、別に指定する必要はありません。
+内蔵・外部どちらでも、Bridgeが登録した参照音声は保存先の `voices/` に入ります。本家speech.cppは参照音声を永続保存しないため、Bridgeが不足分を再登録します。Irodori-TTS-Serverには既存の保存機能があり、登録が残っていれば再登録しません。外部TTSだけにある音声はBridgeには自動保存されません。バックアップは台帳も含め保存先全体をコピーしてください。
 
 `TTS_CONFIG_FILE` の内容が使われるのは、その保存先に `bridge.sqlite` を初めて作るときと、管理画面の「設定を初期値に戻す」を押したときだけです。「設定を初期値に戻す」で戻るのはキャラ・声・紐付けで、認証情報と接続設定は残ります。使い始めた卓では、ファイルを書き換えて再起動しても反映されません。
 

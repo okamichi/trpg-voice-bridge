@@ -9,10 +9,10 @@ export function credits(bridgeLicense, speechLicense, speech) {
   ];
   if (speechLicense)
     entries.push({
-      title: "speech.cpp（フォーク版）",
+      title: "speech.cpp",
       url: `https://github.com/${speech.repository.replace(/\.git$/, "")}/tree/${speech.commit}`,
       linkText: `${speech.repository}（${speech.commit.slice(0, 7)}）`,
-      note: "内蔵TTSに使っています。nyosegawa/speech.cppをフォークしたものです。",
+      note: "内蔵TTSに使っています。参照音声の保存・復元はBridgeが行います。",
       license: speechLicense,
     });
   return {

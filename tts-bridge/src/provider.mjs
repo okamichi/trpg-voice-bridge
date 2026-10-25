@@ -1,5 +1,6 @@
 import { parseDelivery } from "../delivery.mjs";
 import { check, voiceSchema, DELIVERY_CAPTION_MODES } from "./contracts.mjs";
+import { speechModel } from "./tts-api.mjs";
 export const AUDIO_LIMIT = 25 * 1024 * 1024;
 export async function readLimited(response, limit) {
   if (!response.body || Number(response.headers.get("content-length")) > limit)
@@ -77,7 +78,7 @@ export function inspectWav(b) {
     mediaType: "audio/wav",
   };
 }
-export function payload(text, v, p, deliveryCaptionMode = "append") {
+export function payload(text, v, p, deliveryCaptionMode = "append", model) {
   voiceSchema(v);
   check(
     DELIVERY_CAPTION_MODES.includes(deliveryCaptionMode),
@@ -104,6 +105,37 @@ export function payload(text, v, p, deliveryCaptionMode = "append") {
           .filter(Boolean)
           .join("。");
   check(caption.length <= 1000, "演技指示込みのcaptionは1000文字までです");
+  if (p.type === "speech") {
+    const voiceId = hasReference ? v.voiceId : "none";
+    const takes = (name) => model?.speech.options?.some((o) => o.name === name);
+    check(
+      model?.speech.voices.some((voice) => voice.name === voiceId),
+      `参照音声「${v.voiceId}」が現在のTTSにありません`,
+      409,
+    );
+    check(
+      !caption || takes("instructions"),
+      "このモデルは声の説明・演技指示に対応していません。対応するGGUFを選んでください",
+      409,
+    );
+    const body = {
+      model: model.id,
+      input: delivery.input,
+      voice: voiceId,
+      response_format: "pcm",
+      speed: v.speed,
+      steps: v.steps,
+      seed: Number(BigInt(v.seed) % (1n << 53n)),
+      ...(takes("instructions") ? { instructions: caption } : {}),
+    };
+    for (const [key, name, active] of [
+      ["cfgScaleText", "cfg_scale_text", true],
+      ["cfgScaleCaption", "cfg_scale_instructions", Boolean(caption.trim())],
+      ["cfgScaleSpeaker", "cfg_scale_speaker", hasReference],
+    ])
+      if (active && takes(name) && v[key] != null) body[name] = v[key];
+    return JSON.stringify(body);
+  }
   const irodori = {
     caption,
     seed: "__SEED__",
@@ -161,9 +193,23 @@ export async function synthesize(
     timeoutMs = 120000,
     signal,
     deliveryCaptionMode = "append",
+    model,
   } = {},
 ) {
   if (provider.type === "mock") return mockWav();
+  signal = AbortSignal.any([
+    AbortSignal.timeout(timeoutMs),
+    ...(signal ? [signal] : []),
+  ]);
+  if (provider.type === "speech") {
+    model ??= await speechModel(provider, fetchImpl, signal);
+    return synthesizeSpeech(text, voice, provider, {
+      fetchImpl,
+      signal,
+      deliveryCaptionMode,
+      model,
+    });
+  }
   const response = await fetchImpl(`${provider.baseUrl}/v1/audio/speech`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -202,4 +248,127 @@ export async function synthesize(
     );
   }
   return readLimited(response, AUDIO_LIMIT);
+}
+
+// Native speech.cpp streams mono s16le. Bound the stream before constructing
+// the WAV; cancellation also stops work on the server when 120 seconds is met.
+async function synthesizeSpeech(text, voice, provider, options) {
+  const { fetchImpl, signal, deliveryCaptionMode, model } = options;
+  const base = JSON.parse(
+    payload(text, voice, provider, deliveryCaptionMode, model),
+  );
+  let rate,
+    bytes = 0,
+    attempts = 0;
+  const chunks = [];
+  const generate = async (input) => {
+    signal.throwIfAborted();
+    check(++attempts <= 64, "長文の分割上限です。文章を短くしてください", 502);
+    const response = await fetchImpl(`${provider.baseUrl}/v1/audio/speech`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...base, input }),
+      signal,
+    });
+    if (!response.ok) {
+      let problem;
+      try {
+        problem = JSON.parse(
+          (await readLimited(response, 8192)).toString("utf8"),
+        ).error;
+      } catch {
+        /* Keep the HTTP status if a proxy did not return JSON. */
+      } finally {
+        await response.body?.cancel().catch(() => {});
+      }
+      if (
+        response.status === 400 &&
+        problem?.param === "input" &&
+        problem?.code === "unsupported_value"
+      ) {
+        const points = [...input];
+        check(
+          points.length > 1,
+          "入力が長すぎます。文章を短くしてください",
+          502,
+        );
+        const middle = Math.floor(points.length / 2);
+        await generate(points.slice(0, middle).join(""));
+        if (bytes < rate * 2 * 120)
+          await generate(points.slice(middle).join(""));
+        return;
+      }
+      if (
+        problem?.param === "instructions" &&
+        /tokens long|at most/.test(problem.message ?? "")
+      )
+        throw Error(
+          "声の説明・演技指示がモデルの上限を超えています。captionや発言内の演技指示を短くしてください",
+        );
+      const message =
+        typeof problem?.message === "string"
+          ? problem.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 300)
+          : "";
+      throw Error(
+        `TTS HTTP ${response.status}${message ? `: ${message}` : ""}`,
+      );
+    }
+    const sampleRate = Number(response.headers.get("X-Sample-Rate"));
+    const reader = response.body?.getReader();
+    try {
+      check(
+        Number.isInteger(sampleRate) &&
+          sampleRate >= 8000 &&
+          sampleRate <= 96000 &&
+          (!rate || sampleRate === rate),
+        "TTSのサンプルレートが不正です",
+        502,
+      );
+      rate = sampleRate;
+      check(reader, "TTSの音声が空です", 502);
+      const limit = Math.min(rate * 2 * 120, AUDIO_LIMIT - 44);
+      let received = 0;
+      while (bytes < limit) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        const chunk = Buffer.from(value.subarray(0, limit - bytes));
+        chunks.push(chunk);
+        bytes += chunk.length;
+      }
+      check(
+        bytes === limit || (received > 0 && received % 2 === 0),
+        "TTSのPCM音声が不正です",
+        502,
+      );
+    } catch (error) {
+      // A mid-stream failure may be a long clause, a network interruption or
+      // a stopped server. Never publish the partial PCM or guess the cause.
+      signal.throwIfAborted();
+      if (error.status) throw error;
+      throw new Error(
+        "TTSからの音声受信が途中で中断されました。文章を短くするか、TTSの状態と接続を確認して再試行してください",
+        { cause: error },
+      );
+    } finally {
+      await reader?.cancel().catch(() => {});
+    }
+  };
+  await generate(base.input);
+  const wav = Buffer.alloc(44 + bytes);
+  wav.write("RIFF");
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24);
+  wav.writeUInt32LE(rate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(bytes, 40);
+  Buffer.concat(chunks, bytes).copy(wav, 44);
+  inspectWav(wav);
+  return wav;
 }

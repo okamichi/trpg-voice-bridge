@@ -80,6 +80,7 @@ function applyRuntimeView() {
   $("bundledFields").hidden = !selected;
   $("providerSection").hidden = selected;
   $("providerUrl").disabled = bundled;
+  $("providerType").disabled = bundled;
   $("providerForm").querySelector("button").disabled = bundled;
   $("providerNote").hidden = !bundled;
 }
@@ -87,6 +88,14 @@ async function refresh() {
   if (shuttingDown) return;
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
   if (shuttingDown) return;
+  const referenceProgress = d.referenceProgress ?? d.runtime?.referenceProgress;
+  const restoringReferences =
+    referenceProgress?.state === "running" && referenceProgress.total > 0;
+  const referenceStatus = restoringReferences
+    ? `参照音声復元中 ${referenceProgress.completed}/${referenceProgress.total} 件${referenceProgress.failed ? `（${referenceProgress.failed}件は要確認）` : ""}`
+    : "";
+  $("referenceProgress").hidden = !restoringReferences;
+  $("referenceProgress").textContent = referenceStatus;
   const ttsConnected = ![
     "unreachable",
     "error",
@@ -144,7 +153,7 @@ async function refresh() {
     const states = {
       external: "外部サーバー",
       stopped: "停止",
-      starting: "モデル読込中",
+      starting: referenceStatus || "モデル読込中",
       ready: "準備完了",
       error: "起動失敗",
     };
@@ -181,6 +190,7 @@ async function refresh() {
     }
     applyRuntimeView();
   }
+  if (restoringReferences) setState($("ttsState"), referenceStatus);
   const registrations = (d.voiceCommands ?? [])
     .filter((x) => x.status === "failed")
     .sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
@@ -196,7 +206,7 @@ async function refresh() {
   $("toggle").textContent = accepting ? "読み上げ停止" : "読み上げ開始";
   $("toggle").disabled = false;
   $("connection").textContent =
-    `Irodori-TTS: ${["unreachable", "error", "starting", "stopped"].includes(d.tts.status) ? "未接続・準備中" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
+    `Irodori-TTS: ${["unreachable", "error", "starting", "stopped"].includes(d.tts.status) ? "未接続・準備中" : "接続済み"}${referenceStatus ? ` ／ ${referenceStatus}` : ""} ／ 読み上げ${accepting ? "中" : "停止中"}`;
   const collectors = d.collectors.length
     ? d.collectors.map(
         (c) =>
@@ -214,6 +224,71 @@ async function refresh() {
   $("recovery").hidden = !d.degraded && !d.lastError;
   $("recover").hidden = !d.degraded;
   $("failure").textContent = d.lastError ?? "";
+  const referenceIssues = d.referenceVoices ?? [];
+  $("referenceRecovery").hidden = !referenceIssues.length;
+  $("referenceIssues").replaceChildren(
+    ...referenceIssues.map((issue) => {
+      const row = document.createElement("p"),
+        label = document.createElement("span");
+      label.textContent = `${issue.id ? `${issue.id}: ` : ""}${issue.message}`;
+      row.append(label);
+      if (issue.kind === "conflict") {
+        const button = document.createElement("button");
+        button.textContent = "同じ音声と確認して紐付け";
+        button.onclick = () => {
+          if (
+            !confirm(
+              `接続先の「${issue.id}」が保存した参照音声と同じだと確認しましたか？\n音声データの一致は自動検証できません。確認した場合のみ紐付けてください。`,
+            )
+          )
+            return;
+          run(async () => {
+            await api("reference-voices/resolve", "POST", {
+              action: "adopt",
+              id: issue.id,
+              sha256: issue.sha256,
+              before: d.referenceProvider,
+              confirm: true,
+            });
+            await refresh();
+          });
+        };
+        row.append(button);
+      }
+      if (issue.sha256) {
+        const button = document.createElement("button");
+        button.textContent = "管理対象から外す";
+        button.onclick = () => {
+          if (
+            !confirm(
+              `「${issue.id}」をBridgeの管理対象から外しますか？\nすべての接続先との登録記録を外し、残っているWAVは保存先のvoices-detachedフォルダーへ退避します。TTS側の音声やキャラの声設定は削除しません。同名音声がTTS側に残る間は、同じIDで新規登録できません。`,
+            )
+          )
+            return;
+          run(async () => {
+            await api("reference-voices/resolve", "POST", {
+              action: "forget",
+              id: issue.id,
+              sha256: issue.sha256,
+              before: d.referenceProvider,
+              confirm: true,
+            });
+            await refresh();
+          });
+        };
+        row.append(button);
+      }
+      return row;
+    }),
+  );
+  $("retryReferences").onclick = () =>
+    run(async () => {
+      await api("reference-voices/resolve", "POST", {
+        action: "retry",
+        before: d.referenceProvider,
+      });
+      await refresh();
+    });
   $("pairingSection").hidden = !pending.length;
   $("pairings").replaceChildren();
   for (const p of pending) {
@@ -278,6 +353,7 @@ $("providerForm").onsubmit = (e) => {
     provider = await api("provider", "PUT", {
       before: provider,
       baseUrl: $("providerUrl").value,
+      type: $("providerType").value,
     });
     $("notice").textContent = "接続先を保存しました。";
     await refresh();
@@ -620,6 +696,7 @@ await run(async () => {
   audioFormat = config.audioFormat ?? "opus64";
   $("audioFormat").value = audioFormat;
   $("providerUrl").value = provider.baseUrl;
+  $("providerType").value = provider.type;
   $("deliveryCaptionMode").value = deliveryCaptionMode;
   $("publishText").checked = publishText;
   $("sentencePause").value = sentencePauseMs / 1000;

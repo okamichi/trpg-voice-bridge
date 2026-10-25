@@ -63,8 +63,9 @@ export class Engine extends EventEmitter {
     for (const f of readdirSync(this.audioDir))
       if (/^[\w.-]+\.(wav|tmp|ogg)$/.test(f))
         unlinkSync(join(this.audioDir, f));
-    this.references = new ReferenceVoices((...args) =>
-      (this.options.fetchImpl ?? fetch)(...args),
+    this.references = new ReferenceVoices(
+      (...args) => (this.options.fetchImpl ?? fetch)(...args),
+      store.dir,
     );
     this.chatVoices = new ChatVoices(this);
     this.store.chat.recover();
@@ -669,8 +670,17 @@ export class Engine extends EventEmitter {
         o.onStart?.();
         if (Date.now() - o.created > 180000)
           throw new Error("試聴待機の期限切れ");
+        const { model } = this.references.needsPreparation(
+          o.provider,
+          o.voice.voiceId,
+        )
+          ? await this.references.prepare(o.provider, o.signal, o.voice.voiceId)
+          : {};
+        o.signal?.throwIfAborted();
+        if (this.closed) throw Error("アプリ終了で中断しました");
         const wav = await synthesize(o.text, o.voice, o.provider, {
           ...this.options,
+          model,
           signal: o.signal,
           deliveryCaptionMode: o.deliveryCaptionMode,
         });
@@ -689,8 +699,25 @@ export class Engine extends EventEmitter {
       check(!o.reuseAudioId || a, "再生音声が期限切れです", 409);
       if (!a) {
         const start = performance.now();
+        const { model } = this.references.needsPreparation(
+          o.provider,
+          o.voice.voiceId,
+        )
+          ? await this.references.prepare(
+              o.provider,
+              undefined,
+              o.voice.voiceId,
+            )
+          : {};
+        if (
+          this.closed ||
+          o.epoch !== this.playbackEpoch ||
+          o.status !== "synthesizing"
+        )
+          return;
         const wav = await synthesize(o.text, o.voice, o.provider, {
           ...this.options,
+          model,
           deliveryCaptionMode: o.deliveryCaptionMode,
         });
         o.generationMs = performance.now() - start;
