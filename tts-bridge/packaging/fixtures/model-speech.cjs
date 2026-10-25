@@ -53,10 +53,11 @@ if (process.argv[3] === "models") {
     const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
       stdio: "ignore",
     });
-    fs.writeFileSync(
-      path.join(root, "pids"),
-      JSON.stringify([process.pid, child.pid]),
-    );
+    // The parent treats existence as readiness. Publish only complete JSON;
+    // another process can observe a writeFileSync destination before its write.
+    const pids = path.join(root, "pids");
+    fs.writeFileSync(pids + ".tmp", JSON.stringify([process.pid, child.pid]));
+    fs.renameSync(pids + ".tmp", pids);
     setInterval(() => {}, 1000);
   } else {
     let size = fs.existsSync(p + ".part") ? fs.statSync(p + ".part").size : 0;
