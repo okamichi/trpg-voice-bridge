@@ -88,6 +88,14 @@ async function refresh() {
   if (shuttingDown) return;
   const [d, pending] = await Promise.all([api("diagnostics"), api("pairings")]);
   if (shuttingDown) return;
+  const referenceProgress = d.referenceProgress ?? d.runtime?.referenceProgress;
+  const restoringReferences =
+    referenceProgress?.state === "running" && referenceProgress.total > 0;
+  const referenceStatus = restoringReferences
+    ? `参照音声復元中 ${referenceProgress.completed}/${referenceProgress.total} 件${referenceProgress.failed ? `（${referenceProgress.failed}件は要確認）` : ""}`
+    : "";
+  $("referenceProgress").hidden = !restoringReferences;
+  $("referenceProgress").textContent = referenceStatus;
   const ttsConnected = ![
     "unreachable",
     "error",
@@ -145,7 +153,7 @@ async function refresh() {
     const states = {
       external: "外部サーバー",
       stopped: "停止",
-      starting: "モデル読込中",
+      starting: referenceStatus || "モデル読込中",
       ready: "準備完了",
       error: "起動失敗",
     };
@@ -182,6 +190,7 @@ async function refresh() {
     }
     applyRuntimeView();
   }
+  if (restoringReferences) setState($("ttsState"), referenceStatus);
   const registrations = (d.voiceCommands ?? [])
     .filter((x) => x.status === "failed")
     .sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
@@ -197,7 +206,7 @@ async function refresh() {
   $("toggle").textContent = accepting ? "読み上げ停止" : "読み上げ開始";
   $("toggle").disabled = false;
   $("connection").textContent =
-    `Irodori-TTS: ${["unreachable", "error", "starting", "stopped"].includes(d.tts.status) ? "未接続・準備中" : "接続済み"} ／ 読み上げ${accepting ? "中" : "停止中"}`;
+    `Irodori-TTS: ${["unreachable", "error", "starting", "stopped"].includes(d.tts.status) ? "未接続・準備中" : "接続済み"}${referenceStatus ? ` ／ ${referenceStatus}` : ""} ／ 読み上げ${accepting ? "中" : "停止中"}`;
   const collectors = d.collectors.length
     ? d.collectors.map(
         (c) =>

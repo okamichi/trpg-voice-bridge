@@ -59,6 +59,10 @@ export class SpeechRuntime {
       backends: this.settings.backends,
       status: this.status,
       error: this.error,
+      referenceProgress:
+        this.settings.active.mode === "bundled"
+          ? this.references.progress(this.provider({}))
+          : null,
       restartRequired:
         JSON.stringify(this.settings.active) !==
         JSON.stringify(this.settings.saved),

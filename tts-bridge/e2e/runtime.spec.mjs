@@ -15,6 +15,125 @@ import { SpeechRuntime } from "../src/runtime/speech.mjs";
 import { createServer } from "node:http";
 import { mockWav } from "../src/provider.mjs";
 
+for (const mode of ["bundled", "external"])
+  test(`${mode} speech displays live restoration counts and clears them on completion`, async ({
+    page,
+  }) => {
+    const dataDir = mkdtempSync(join(tmpdir(), "reference-progress-ui-"));
+    const names = new Set(["none", "already"]);
+    const tts = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify(
+          req.url === "/health"
+            ? { status: "ok" }
+            : {
+                data: [
+                  {
+                    id: "Irodori-TTS",
+                    speech: {
+                      task: "synthesis",
+                      voices: [...names].map((name) => ({ name })),
+                      options: [],
+                    },
+                  },
+                ],
+              },
+        ),
+      );
+    });
+    await new Promise((r) => tts.listen(0, "127.0.0.1", r));
+    const runtime = new SpeechRuntime({
+      dataDir,
+      runtimeDir: dataDir,
+      overrides: { mode, ttsPort: tts.address().port },
+      backends: ["metal"],
+    });
+    if (mode === "bundled") runtime.status = "starting";
+    const app = createApp({
+      dataDir,
+      runtime,
+      localOrigin: "http://127.0.0.1:0",
+      providerOptions: { resolveProvider: (saved) => runtime.provider(saved) },
+    });
+    app.store.change((c) => {
+      c.provider.type = "speech";
+      c.provider.baseUrl = `http://127.0.0.1:${tts.address().port}`;
+    });
+    const provider = app.engine.config.provider,
+      refs = mode === "bundled" ? runtime.references : app.engine.references;
+    refs.store.save("already", mockWav());
+    refs.store.bind("already", provider);
+    refs.store.save("new", mockWav());
+    refs.store.save("missing", mockWav());
+    unlinkSync(join(dataDir, "voices/missing.wav"));
+    let release, started, restoring;
+    const gate = new Promise((r) => {
+        release = r;
+      }),
+      waiting = new Promise((r) => {
+        started = r;
+      });
+    refs.fetch = async (url, init) => {
+      if (init?.method !== "POST") return fetch(url, init);
+      started();
+      await gate;
+      names.add(init.body.get("name"));
+      return Response.json({ held: {} });
+    };
+    await new Promise((r) => app.server.listen(0, "127.0.0.1", r));
+    try {
+      await page.goto(
+        app.adminUrl().replace(":0/", `:${app.server.address().port}/`),
+      );
+      await openStep(page, "stepTts");
+      await expect(page.locator("#ttsState")).toHaveText(
+        mode === "bundled" ? "モデル読込中" : "接続済み",
+      );
+      restoring = refs.prepare(provider);
+      await waiting;
+      await page.reload();
+      await openStep(page, "stepTts");
+      await expect(page.locator("#ttsState")).toHaveText(
+        "参照音声復元中 1/3 件",
+      );
+      await expect(page.locator("#referenceProgress")).toHaveText(
+        "参照音声復元中 1/3 件",
+      );
+      await expect(page.locator("#connection")).toContainText(
+        "参照音声復元中 1/3 件",
+      );
+      if (mode === "bundled")
+        await expect(page.locator("#runtimeStatus")).toContainText(
+          "参照音声復元中 1/3 件",
+        );
+      release();
+      await restoring;
+      expect(refs.progress(provider)).toEqual({
+        state: "completed",
+        completed: 3,
+        total: 3,
+        failed: 1,
+      });
+      if (mode === "bundled") runtime.status = "ready";
+      await page.reload();
+      await openStep(page, "stepTts");
+      await expect(page.locator("#ttsState")).toHaveText(
+        mode === "bundled" ? "準備完了" : "接続済み",
+      );
+      await expect(page.locator("#referenceProgress")).toBeHidden();
+      await expect(page.locator("#referenceIssues")).toContainText("missing");
+    } finally {
+      release();
+      await restoring?.catch(() => {});
+      await page.context().close();
+      await app.close();
+      await runtime.close();
+      await new Promise((r) => tts.close(r));
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
 test("external native speech selection is saved and diagnostics use its model list", async ({
   page,
 }) => {

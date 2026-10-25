@@ -220,6 +220,13 @@ try {
   packageDir = moved;
   await start();
   await ready();
+  const restored = await (await api("runtime")).json();
+  assert.deepEqual(restored.referenceProgress, {
+    state: "completed",
+    completed: 2,
+    total: 2,
+    failed: 1,
+  });
   const voices = await (await api("providers/irodori-local/voices")).json();
   assert.ok(voices.some((v) => v.id === "package-smoke"));
   assert.ok(

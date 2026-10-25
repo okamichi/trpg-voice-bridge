@@ -755,3 +755,83 @@ test("restoration queued behind detach rechecks the ledger and never reimports o
   assert.equal(remote.uploads.length, 0);
   assert.deepEqual(refs.store.read().voices, {});
 });
+
+test("restoration progress counts checked, uploaded and failed voices and is scoped to its provider", async (t) => {
+  const dir = temp(t),
+    remote = server("speech");
+  let release, started;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const waiting = new Promise((resolve) => {
+    started = resolve;
+  });
+  const refs = new ReferenceVoices(async (url, init) => {
+    if (init?.method === "POST") {
+      started();
+      await gate;
+    }
+    return remote.fetchImpl(url, init);
+  }, dir);
+  t.after(() => refs.close());
+  refs.store.save("external", mockWav());
+  refs.store.bind("external", provider);
+  refs.store.save("new", mockWav());
+  refs.store.save("missing", mockWav());
+  unlinkSync(join(dir, "voices/missing.wav"));
+  const restoring = refs.prepare(provider);
+  await waiting;
+  assert.deepEqual(refs.progress(provider), {
+    state: "running",
+    completed: 1,
+    total: 3,
+    failed: 0,
+  });
+  assert.equal(
+    refs.progress({ ...provider, baseUrl: "http://localhost:9999" }),
+    null,
+  );
+  const snapshot = refs.progress(provider);
+  snapshot.completed = 999;
+  assert.equal(refs.progress(provider).completed, 1);
+  release();
+  await restoring;
+  assert.deepEqual(refs.progress(provider), {
+    state: "completed",
+    completed: 3,
+    total: 3,
+    failed: 1,
+  });
+});
+
+test("cancelled restoration never leaves running progress and Irodori does not report startup restoration", async (t) => {
+  const dir = temp(t),
+    remote = server("speech"),
+    controller = new AbortController();
+  let started;
+  const waiting = new Promise((resolve) => {
+    started = resolve;
+  });
+  const refs = new ReferenceVoices(async (url, init) => {
+    if (init?.method !== "POST") return remote.fetchImpl(url, init);
+    started();
+    return new Promise((_resolve, reject) =>
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), {
+        once: true,
+      }),
+    );
+  }, dir);
+  t.after(() => refs.close());
+  refs.store.save("new", mockWav());
+  const restoring = refs.prepare(provider, controller.signal);
+  const rejected = assert.rejects(restoring, /cancelled/);
+  await waiting;
+  controller.abort(new Error("cancelled"));
+  await rejected;
+  assert.equal(refs.progress(provider).state, "failed");
+  const irodori = server("irodori"),
+    p = { ...provider, type: "irodori" };
+  refs.fetch = irodori.fetchImpl;
+  await refs.prepare(p);
+  assert.equal(refs.progress(p), null);
+});

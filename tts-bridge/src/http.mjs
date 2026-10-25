@@ -40,8 +40,10 @@ export function createApp({
   const store = new Store(dataDir, initial ?? initialConfig(profiles)),
     engine = new Engine(store, providerOptions);
   // Startup restoration and request-time checks report to the same diagnostics.
-  if (runtime?.references)
+  if (runtime?.references) {
     engine.references.problems = runtime.references.problems;
+    engine.references.restorations = runtime.references.restorations;
+  }
   let download;
   try {
     download = chatterDownload(chatterAssetReader);

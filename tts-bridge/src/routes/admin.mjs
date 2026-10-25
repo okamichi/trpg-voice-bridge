@@ -320,6 +320,7 @@ export async function adminRoutes(ctx, req, res, url) {
         voiceCommands: store.voiceCommands.diagnostics(),
         referenceVoices: engine.references.diagnostics(engine.config.provider),
         referenceProvider: engine.config.provider,
+        referenceProgress: engine.references.progress(engine.config.provider),
         pending: engine.queue.length,
         busy: engine.busy,
         audioBytes: engine.audioBytes(),

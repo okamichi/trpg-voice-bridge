@@ -13,6 +13,7 @@ export class ReferenceVoices {
     this.store = dataDir ? new ReferenceStore(dataDir) : null;
     this.operations = Promise.resolve();
     this.problems = new Map();
+    this.restorations = new Map();
     this.queue = [];
     this.running = null;
     this.closed = false;
@@ -67,6 +68,10 @@ export class ReferenceVoices {
   }
   clear(provider, id) {
     this.problems.get(referenceTarget(provider))?.delete(id);
+  }
+  progress(provider) {
+    const progress = this.restorations.get(referenceTarget(provider));
+    return progress ? { ...progress } : null;
   }
   diagnostics(provider) {
     if (provider.type === "mock") return [];
@@ -168,59 +173,85 @@ export class ReferenceVoices {
     )
       return {};
     const restore = async () => {
-      signal.throwIfAborted();
-      let remote = await remoteVoices(provider, this.fetch, signal);
-      // Refresh under the mutation lock: a queued detach or a new registration
-      // may have changed this record since prepare() was called.
-      const { records, issues } = this.scan(provider);
-      const localProblem = issues.find((p) => p.id === voiceId);
-      check(
-        !localProblem ||
-          (remote.voices.some((v) => v.id === voiceId) &&
-            this.store.bound(voiceId, provider)),
-        localProblem?.message,
-        409,
-      );
-      const selected = Object.entries(records).filter(([id]) =>
-        voiceId ? id === voiceId : id !== this.uploadingId,
-      );
-      let changed = false;
-      for (const [id, entry] of selected) {
+      const progress = {
+        state: "running",
+        completed: 0,
+        total: Object.keys(initial.records).filter((id) =>
+          voiceId ? id === voiceId : id !== this.uploadingId,
+        ).length,
+        failed: 0,
+      };
+      if (provider.type === "speech" && !voiceId)
+        this.restorations.set(referenceTarget(provider), progress);
+      try {
         signal.throwIfAborted();
-        let kind = "file";
-        try {
-          if (remote.voices.some((v) => v.id === id)) {
-            kind = "conflict";
-            check(
-              this.store.bound(id, provider),
-              this.conflict(id, entry).message,
-              409,
-            );
-            if (this.problem(provider, id)?.kind !== "file")
-              this.clear(provider, id);
-            continue;
-          }
-          const issue = issues.find((p) => p.id === id);
-          check(!issue, issue?.message, 409);
-          const wav = this.store.wav(id, entry.sha256);
-          kind = "upload";
-          await uploadVoice(provider, id, wav, this.fetch, signal);
-          this.store.bind(id, provider);
-          this.clear(provider, id);
-          changed = true;
-        } catch (error) {
+        let remote = await remoteVoices(provider, this.fetch, signal);
+        // Refresh under the mutation lock: a queued detach or a new registration
+        // may have changed this record since prepare() was called.
+        const { records, issues } = this.scan(provider);
+        const localProblem = issues.find((p) => p.id === voiceId);
+        check(
+          !localProblem ||
+            (remote.voices.some((v) => v.id === voiceId) &&
+              this.store.bound(voiceId, provider)),
+          localProblem?.message,
+          409,
+        );
+        const selected = Object.entries(records).filter(([id]) =>
+          voiceId ? id === voiceId : id !== this.uploadingId,
+        );
+        progress.total = selected.length;
+        if (
+          provider.type === "speech" &&
+          voiceId &&
+          selected.some(([id]) => !remote.voices.some((v) => v.id === id))
+        )
+          this.restorations.set(referenceTarget(provider), progress);
+        let changed = false;
+        for (const [id, entry] of selected) {
           signal.throwIfAborted();
-          this.problem(provider, {
-            id,
-            kind,
-            message: error.message,
-            ...(kind === "conflict" ? { sha256: entry.sha256 } : {}),
-          });
-          if (voiceId) throw error;
+          let kind = "file";
+          try {
+            if (remote.voices.some((v) => v.id === id)) {
+              kind = "conflict";
+              check(
+                this.store.bound(id, provider),
+                this.conflict(id, entry).message,
+                409,
+              );
+              if (this.problem(provider, id)?.kind !== "file")
+                this.clear(provider, id);
+              continue;
+            }
+            const issue = issues.find((p) => p.id === id);
+            check(!issue, issue?.message, 409);
+            const wav = this.store.wav(id, entry.sha256);
+            kind = "upload";
+            await uploadVoice(provider, id, wav, this.fetch, signal);
+            this.store.bind(id, provider);
+            this.clear(provider, id);
+            changed = true;
+          } catch (error) {
+            signal.throwIfAborted();
+            progress.failed++;
+            this.problem(provider, {
+              id,
+              kind,
+              message: error.message,
+              ...(kind === "conflict" ? { sha256: entry.sha256 } : {}),
+            });
+            if (voiceId) throw error;
+          } finally {
+            progress.completed++;
+          }
         }
+        if (changed) remote = await remoteVoices(provider, this.fetch, signal);
+        progress.state = "completed";
+        return remote;
+      } catch (error) {
+        progress.state = "failed";
+        throw error;
       }
-      if (changed) remote = await remoteVoices(provider, this.fetch, signal);
-      return remote;
     };
     return Object.keys(initial.records).length || initial.issues.length
       ? this.exclusive(restore)
