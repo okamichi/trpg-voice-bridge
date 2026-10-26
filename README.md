@@ -1,32 +1,21 @@
 # TRPG Voice Bridge
 
-FVTT・ユドナリウム・ココフォリアなどのVTTから、音声担当者（GMまたはPL）のブラウザ拡張で公開発言を取り込み、Irodori-TTS-Server（あるいはspeech.cpp）で発言の音声を生成して、参加者のブラウザへ、あるいはDiscord Bot経由で同じ音声を配るためのシステムです。
+TRPGのオンセツールでのキャラクターのチャット発言を、自分たちがデザインしたキャラの声で読み上げるツールです。このBridgeを動作させる音声生成担当者のPCで音声をリアルタイムで生成し、参加者のブラウザやDiscordへ配信して聴くことができます。
+
+FoundryVTT・ユドナリウム・ココフォリアなどのVTTのメインチャットを、音声生成担当者が Chrome の機能拡張によって取り込んで音声生成 (TTS: Text To Speech) を行います。また、D&D Beyond の MapsVTT のようなチャット機能自体がないオンセツールでも、付属するチャット機能からテキストを取り込んで音声生成することができます。音声生成担当者以外の参加者は、別途ツールを入れる必要はありません。
 
 ![TRPG Voice Bridgeのしくみ](./info.png)
 
-キャラの声はPlayerで全員が設定できます。Collectorの初回の承認と、読み上げの開始・停止は管理画面で行います。
+基本的な機能としては、ココフォリア、ユドナリウム、FoundryVTT 内のチャットに入力した参加者のキャラクターのテキスト発言を、そのキャラ用にデザインした声と指定した演技で喋らせることができます。
 
-チャット機能のないVTTでも、招待URLからPlayerを開き、キャラを作成・選択して直接発言できます。この使い方ではCollectorは不要です。チャット本文は保存され、TTSの準備前や読み上げ停止中でも会話できます。サイドパネル用の[Chatter拡張](tts-bridge/chatter/README.md)も利用できます。
+- キャラの発言に演技や感情などを混ぜることができ、ロールプレイや喋りが苦手な人でもテキストで噛まずに発言できる
+- Discordなどを利用しないテキストベースのセッションでも、参加者はキャラの発言を聴くことができる
+- Discord のボイスチャットを併用しているなら、Discord Bot 経由でキャラの発言を聴くことができる
+- D&D Beyond MapsVTT のようなチャット機能がないオンラインセッションツールでも、付属のチャット機能で音声生成を行うことができる
 
-システムメッセージやダイスだけの発言は読み上げません。ダイス付きのセリフはコマンドを除いた本文だけを読み上げ、結果は読みません。VTTごとの取得の条件は[セットアップガイド](docs/setup-guide.md#collectorとは)を見てください。
+## 動画によるガイド
 
-### 起動方法とビルド方法
-
-ビルド済みアプリを使用する場合、[リリース情報](https://github.com/okamichi/trpg-voice-bridge/releases) のページから、対応OS用のZIPファイルをダウンロードしてください。
-付属している [ダウンロードしたアプリの使い方](tts-bridge/packaging/README.txt) のドキュメントに従って起動してください。
-
-ソースから使う場合は、[ソースからのビルドと起動](docs/build.md) のドキュメントに従ってビルドと起動を行ってください。
-
-### 詳細情報
-
-- [構成・Collector・声の登録（セットアップガイド）](docs/setup-guide.md)
-- [各種コンポーネント説明](docs/component.md)
-- [Bridgeの設定と動きの詳細](tts-bridge/README.md)
-- [音声をDiscordで流す場合](docs/discord.md)
-- [別のPCの参加者にPlayerを公開する場合](docs/online.md)
-- [よくある質問・音声トラブルと設定の調整](docs/faq.md)
-
-### TRPG-Voice-Bridge の紹介
+### TRPG Voice Bridgeの紹介
 
 https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
@@ -34,45 +23,109 @@ https://github.com/user-attachments/assets/665cbcc9-6e3c-471d-a7fa-a81acc433b26
 
 https://github.com/user-attachments/assets/f966a54c-3858-4a38-a826-e887b3212dc1
 
-## Irodori-TTS-Server について
 
-音声の生成には[Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server)を使います。日本語音声合成モデル[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)を、OpenAIのText-to-Speech API互換で提供するサーバーです。Bridgeと同じマシンで`127.0.0.1:8088`に起動する構成を標準にしています。
+## 入手と起動方法とビルド方法
 
-Bridgeが使うIrodoriの機能は次のとおりです。
+### ビルド済みアプリをダウンロードして起動する
 
-- **声の説明文による声づくり（Voice Design）**: 「落ち着いた年配の男性の声」のような説明文（caption）とseedで声を作ります。参照音声がなくても、キャラごとに声を作り分けられます。
-- **参照音声による声の固定**: 参照音声を指定すると、その声質に寄せて生成します。Playerで試聴した声を、そのまま参照音声として登録できます。
-- **発言ごとの演技指示**: 発言に書いた感情や演技の指示を反映して生成します（[書き方](#演技指示の書き方)）。
+[リリース情報](https://github.com/okamichi/trpg-voice-bridge/releases) のページから、対応OS用のZIPファイルをダウンロードしてください。
 
-Irodori-TTS-Server のほか、[speech.cpp本家](https://github.com/nyosegawa/speech.cpp) のIrodoriモデルにも対応しています。外部TTSを使う場合は、管理画面の「TTS接続先」でサーバーの種類を選んでください。従来の互換フォークには「Irodori-TTS-Server / speech.cpp互換フォーク」を使います。
+ZIPを解凍してできた次の実行ファイルをクリックして起動して下さい。
 
-アプリには本家の speech.cpp を同梱し、管理画面からモデルをダウンロードして使えます。Bridgeで登録した参照音声の元WAVは保存先の `voices/` に、登録先の記録は `reference-voices.json` に保存します。内蔵TTSの起動時と生成前に不足する音声を再登録します。Irodori-TTS-Serverに音声が残っていれば、再登録は不要です。バックアップは保存先全体をコピーしてください。
+- Mac: trpg-voice-bridge
+- Windows : trpg-voice-bridge.exe
 
-内蔵speech.cppの起動中は「モデル読込中」→「参照音声復元中 10/30 件」→「準備完了」と表示します。件数は確認・処理済みの数で、失敗した音声も含み、問題の詳細は診断欄に表示します。外部speech.cppでは、生成前の不足音声の復元や「再確認・復元」の実行中に進捗を表示します。外部サーバーの起動・モデル読み込みはBridgeの管理外です。
+詳細は、付属している [ダウンロードしたアプリの使い方](tts-bridge/packaging/README.txt) のドキュメントを参照下さい。
 
-外部の本家speech.cppで音声登録も使う場合は、`speech serve MODEL --host 127.0.0.1 --port 18088` のように起動します。別PCでは両端が同じポートのSSH転送（例: `ssh -N -L 18088:127.0.0.1:18088 user@tts-host`）を利用し、Bridgeから `http://127.0.0.1:18088` へ接続します。接続先に同名の別音声がある場合は、別IDで登録してください。TTS側にしかない音声のWAVはBridgeへ自動保存されません。
+**注意事項** :
+- 実行ファイルは認証されていないアプリとして、そのままでは警告が出たり、実行できない場合がある
+- Macの場合は「システム設定 > プライバシーとセキュリティ」から、「"（アプリ名）"は〜ため開けませんでした」という表示が出ているこのアプリを「このまま開く」 
+- Windowsの場合は、警告の「詳細情報」というリンク文字列から「実行」ボタンをクリック
 
-参照音声の問題は管理画面の「参照音声の確認が必要です」に表示します。Bridge側のWAVがなくても、登録済みと確認できる接続先の音声は引き続き使えます。元のWAVや接続先を修正したら「再確認・復元」を押してください。URL表記の変更や登録応答の消失で同名衝突になった場合は、同じ音声と確認できたものだけ「同じ音声と確認して紐付け」で再び使えます。
+### ソースからビルドして起動する
 
-不要な記録は「管理対象から外す」で解除できます。残っているWAVは保存先の `voices-detached/` に退避し、TTS側の音声やキャラの声設定は削除しません。解除後、接続先に同名音声がなければ同じIDで登録し直せます。登録が明確に拒否された場合は、その試行で新規保存した音声を取り消します。タイムアウトや5xxなど登録結果が不明な場合は、復旧のため保存を保持します。
+ソースから場合は、[ソースからのビルドと起動](docs/build.md) のドキュメントに従ってビルドと起動を行ってください。
+
+```bash
+% git clone https://github.com/okamichi/trpg-voice-bridge
+% cd trpg-voice-bridge/tts-bridge
+% npm ci
+% npm start
+```
+
+詳細な起動方法については、[ソースからのビルドと起動](docs/build.md)を参照してください。
+
+## 起動後の流れ
+
+1. 実行ファイルを起動し、開いた Bridge の管理画面でTTSサーバを準備します。内蔵speech.cppの場合は、音声生成用モデルをダウンロード・選択して保存し、Bridgeを再起動します（終了・再度起動）。
+2. Discord Bot を利用する場合は、あらかじめDiscord 側で App の作成と設定を行い、招待URLから参加者のボイスチャンネルに Bot を入室させておきます。
+2. 卓が開始されたら、VTTのチャットからテキストを取り込むため、Bridge を動かしている担当者者が Collectorと呼ぶ Chrome 拡張を導入して接続・承認します。
+3. また、管理画面でPlayer用の招待URLを参加者に発行し、参加者はそれを別タブで開きます。
+4. 管理画面で「読み上げ開始」を押し、ブラウザで聞く参加者がPlayerの「音声を有効にする」を押せば、生成された音声再生の準備は整います。
+
+## 詳細情報一覧
+
+| やりたいこと                    | 読む文書                                              |
+| ------------------------------- | ----------------------------------------------------- |
+| ダウンロードしたアプリを使う    | [配布アプリの説明書](tts-bridge/packaging/README.txt) |
+| 卓を準備し、声を設定して遊ぶ    | [セットアップガイド](docs/setup-guide.md)             |
+| 必要な部品と構成を選ぶ          | [構成と使い分け](docs/component.md)                   |
+| Discordで聴く・声を作る         | [Discord連携](docs/discord.md)                        |
+| Bridgeを参加者へ公開させ、声を作る・聴く | [参加者への公開](docs/online.md)                      |
+| 質問FAQ・設定を調整      | [FAQ](docs/faq.md)                                    |
+| ソースから起動・ビルドする      | [ソースからのビルドと起動](docs/build.md)             |
+| 保存・API・制限を調べる         | [Bridgeの仕様](tts-bridge/README.md)                  |
+
+## 音声生成エンジンとモデル
+
+配布アプリにはTTSの音声生成エンジンとして[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp)を同梱しています。別途、準備する必要はありません。モデルは同梱していないため、管理画面から対応するIrodoriモデルのGGUFをダウンロード取得するか、あらかじめダウンロードした手元のGGUFを指定することもできます。
+
+外部TTSにはオリジナルの[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp)と[Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server)、それにspeech.cppにIrodori-TTS-Serverとの互換性を加えた[フォーク版 speech.cpp](https://github.com/okamichi/speech.cpp)を選べます。外部サーバの準備は、外部サーバ側のドキュメントを読んで、別途行なってください。
+
+これらのTTSサーバは声の説明文とseedから任意にデザインされた声を作り、その声を参照音声として登録できます。Bridgeは登録した音声データを保存し、音声生成時にその声をもとにしてキャラの音声を生成します。この参照音声の管理方法や復元・バックアップの扱いについては[参照音声の管理](docs/setup-guide.md#参照音声の管理)を参照してください。
+
+※ 外部のIrodori-TTS-ServerをApple Siliconで動かす場合は、MLXハイブリッド推論を追加したフォーク[okamichi/Irodori-TTS-Server](https://github.com/okamichi/Irodori-TTS-Server)の`mlx`ブランチも用意しています。
 
 ### 推奨モデル
 
-| モデル | ライセンス | 特徴 |
-| :--- | :--- | :--- |
-| [Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) | MIT | 標準的な小型モデル。生成が速く、手元のGPUやApple Siliconでも扱いやすいです。 |
-| [phasefield-audio/Irodori-TTS-v4.1-Anime](https://huggingface.co/phasefield-audio/Irodori-TTS-v4.1-Anime) | MIT | v4.1-Smallをアニメ調の音声で追加学習したモデル。キャラクターらしい演技に向きます。説明文や絵文字の効き方はベースモデルと異なる場合があります。 |
-| [Aratako/Irodori-TTS-v4-Large](https://huggingface.co/Aratako/Irodori-TTS-v4-Large) | Gemma | 約3.29Bパラメーターの大型モデル。説明文への追従性が高い一方、多くのメモリと生成時間が必要です。 |
+対応している推奨モデルをこの表に示します。声の印象、生成速度、必要メモリ、演技指示の効き方はモデルで変わります。モデルの名前だけで判断せず、実際のセリフで確認してください。
 
-ライセンスはモデルごとに異なります。v4-LargeはGemmaの利用規約に従います。
+| モデル                                                                                                    | ライセンス | 特徴                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small)                   | MIT        | 標準的な小型モデル。生成が速く、手元のGPUやApple Siliconでも扱いやすいです。                                                                   |
+| [phasefield-audio/Irodori-TTS-v4.1-Anime](https://huggingface.co/phasefield-audio/Irodori-TTS-v4.1-Anime) | MIT        | v4.1-Smallをアニメ調の音声で追加学習したモデル。キャラクターらしい演技に向きます。説明文や絵文字の効き方はベースモデルと異なる場合があります。 |
+| [Aratako/Irodori-TTS-v4-Large](https://huggingface.co/Aratako/Irodori-TTS-v4-Large)                       | Gemma      | 約3.29Bパラメーターの大型モデル。説明文への追従性が高い一方、多くのメモリと生成時間が必要です。                                                |
 
-量子化版もあります。v4.1-Animeはリポジトリ内のサブフォルダーに、v4-Largeは[Aratako/Irodori-TTS-v4-Large-Quantized](https://huggingface.co/Aratako/Irodori-TTS-v4-Large-Quantized)に収録されています。量子化版はおもにNVIDIA CUDA向けです。
+ライセンスはモデルごとに異なります。v4-LargeはGemmaの利用規約に従います。モデルの利用条件は配布元のモデルカードを確認してください。
 
-Apple Siliconで動かす場合は、MLXハイブリッド推論を追加したフォーク[okamichi/Irodori-TTS-Server](https://github.com/okamichi/Irodori-TTS-Server)の`mlx`ブランチを用意しています。
+軽量な量子化版もあります。v4.1-Animeはリポジトリ内のサブフォルダーに、v4-Largeは[Aratako/Irodori-TTS-v4-Large-Quantized](https://huggingface.co/Aratako/Irodori-TTS-v4-Large-Quantized)に収録されています。
 
-## 演技指示の書き方
+## チャットの取り込みと生成音声の再生についての解説
 
-VTTのチャットで、発言の中に絵文字か全角の丸カッコで指示を書きます。丸カッコの指示は読み上げから取り除かれます。
+### チャットを取り込む方法
+
+**VTTにあるチャットを読み上げる**場合は、音声担当者のChromeへ、TRPG Voice Collector と呼ぶ拡張機能をインストールします。Collectorが接続後の新しい公開キャラ発言を取り込みます。参加者全員にCollectorを入れる必要はありません。
+
+**チャットのないVTTで会話する**場合は、招待リンクからPlayerを開くか、ChromeのChatterサイドパネルを使います。キャラの声を作成し、そのキャラとして発言できます。この場合は、VTTのチャットからテキストを取り込む必要がないために Collector は不要です。
+
+### 生成音声のデザイン・再生の方法
+
+**参加者のブラウザで声のデザイン・聴く**場合は、参加者はブラウザの別タブで、音声生成担当者の管理画面から発行された招待URL (Player) を開きます。Player には声のデザイン機能と、生成されて配信された音声の受信・再生機能があり、Discord などを利用しないテキセでも声を出すことができます。参加者が Player の招待URLにアクセスするために、Bridge をインターネットに公開する必要があります。ブラウザの別タブでなくサイドパネルに Player と同等な機能を表示することができる TRPG Voice Chatter と呼ぶ Chrome 拡張を参加者がインストールして使うこともできます。
+
+**Discordで聞く**場合は、あらかじめ用意した Discord Bot を卓のボイスチャンネルへ接続し、生成された声を聴くことができます。声のデザインも、設定用のテキストチャンネル経由で Bot とやりとりして登録することができるので、Discord にさえ繋がるなら、Bridge をインターネットに公開せずに利用することができます。もちろん、声のデザインや設定のしやすい Player/Chatter との併用も可能です（声の再生は二重に聞こえるので、どちらかに絞った方がいいでしょう）。
+
+また Player/Chatter の設定は卓の参加者で共同編集できるため、参加者の一人が声の設定をできなくても、他の参加者、あるいは音声声担当者が声を代わりに登録することもできます。
+
+## チャットのセリフの発言と、演技指示の書き方
+
+最初に、新規キャラクターがVTT内のチャットで発言すると、システムの声の未登録リストに表示されます。次に、参加者は自分のキャラクターの声をデザインし、試聴後にそのキャラクターの参照音声として登録します。すると次回の発言から音声合成され、システムによって即再生されます。
+
+```text
+さあ、冒険に出かけよう！
+ここは私に任せて！
+```
+
+またチャットのテキスト中に絵文字か、全角の丸カッコで指示を書くことで、感情表現や演技などをさせることができます（丸カッコの指示は読み上げから取り除かれます）。
 
 ```text
 （怒り）ふざけるな！（間）……もういい。
@@ -105,7 +158,7 @@ VTTのチャットで、発言の中に絵文字か全角の丸カッコで指�
 
 登録すると、声を生成して参照音声として保存し、発言したキャラに割り当てます。読み上げ中なら、「こんにちは。これからこの声でお話しします。」をPlayerと、接続中のDiscordのボイスチャンネルに流します。声削除は割り当てを外すだけで、キャラや声、参照音声のファイルは残ります。
 
-細かい決まりは[セットアップガイド](docs/setup-guide.md#チャットから声を登録する)を見てください。
+詳細は[セットアップガイド](docs/setup-guide.md#チャットから声を登録する)を見てください。
 
 ## スクリーンショット
 
