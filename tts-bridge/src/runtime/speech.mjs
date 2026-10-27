@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import {
   accessSync,
   constants,
@@ -19,6 +20,69 @@ import { ReferenceVoices } from "../reference-voices.mjs";
 // Windows' STATUS_DLL_NOT_FOUND. The Vulkan build cannot start without the
 // Vulkan loader, vulkan-1.dll, which GPU drivers install.
 const DLL_NOT_FOUND = 0xc0000135;
+const runFile = promisify(execFile);
+
+// Keep the reservation until the consumer finishes the body, including streamed
+// PCM. A zero-sized queue avoids pulling (and releasing) an unread response.
+function trackedResponse(response, signal, release) {
+  if (!response.body) {
+    release();
+    return response;
+  }
+  const reader = response.body.getReader();
+  let finished = false;
+  let abort;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    signal.removeEventListener("abort", abort);
+    release();
+  };
+  const body = new ReadableStream(
+    {
+      start(controller) {
+        void reader.closed.catch((error) => {
+          if (!finished) controller.error(error);
+          finish();
+        });
+        abort = () => {
+          if (finished) return;
+          controller.error(signal.reason);
+          void reader.cancel(signal.reason).catch(() => {});
+          finish();
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      },
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (finished) return;
+          if (done) {
+            controller.close();
+            finish();
+          } else controller.enqueue(value);
+        } catch (error) {
+          if (!finished) controller.error(error);
+          finish();
+        }
+      },
+      cancel(reason) {
+        finish();
+        return reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const result = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  for (const key of ["url", "redirected", "type"])
+    Object.defineProperty(result, key, { value: response[key] });
+  return result;
+}
 
 export function stopMessage(code, backend) {
   if (backend === "vulkan" && code === DLL_NOT_FOUND)
@@ -35,7 +99,9 @@ export class SpeechRuntime {
     overrides,
     backends,
     startupTimeout = 180000,
+    transcriptionTimeout = 120000,
     speechProgram,
+    fetchImpl = fetch,
   }) {
     this.dataDir = dataDir;
     this.settings = new RuntimeSettings(dataDir, overrides, backends);
@@ -47,10 +113,22 @@ export class SpeechRuntime {
       supervisor: join(runtimeDir, `bridge-supervisor${suffix}`),
     });
     this.startupTimeout = startupTimeout;
+    this.transcriptionTimeout = transcriptionTimeout;
     this.status =
       this.settings.active.mode === "external" ? "external" : "stopped";
     this.error = "";
-    this.references = new ReferenceVoices(fetch, dataDir);
+    this.fetchImpl = fetchImpl;
+    this.references = new ReferenceVoices(fetchImpl, dataDir);
+    this.shutdown = new AbortController();
+    this.stt = {
+      enabled: this.settings.active.stt.enabled,
+      status: this.settings.active.stt.enabled ? "starting" : "off",
+      error: "",
+    };
+    this.sttListeners = new Set();
+    this.activityListeners = new Set();
+    this.ttsActive = 0;
+    this.sttActive = false;
   }
   snapshot() {
     return {
@@ -59,6 +137,7 @@ export class SpeechRuntime {
       backends: this.settings.backends,
       status: this.status,
       error: this.error,
+      stt: { ...this.stt },
       referenceProgress:
         this.settings.active.mode === "bundled"
           ? this.references.progress(this.provider({}))
@@ -77,11 +156,208 @@ export class SpeechRuntime {
         }
       : saved;
   }
-  fetch = (...args) => {
+  fetch = (input, init) => {
     if (this.settings.active.mode === "bundled" && this.status !== "ready")
       throw Error(this.error || "内蔵TTSは準備中です");
-    return fetch(...args);
+    const method =
+      init?.method ?? (input instanceof Request ? input.method : "GET");
+    if (
+      this.stt.enabled &&
+      method.toUpperCase() === "POST" &&
+      new URL(input instanceof Request ? input.url : input).pathname ===
+        "/v1/audio/speech"
+    )
+      return this.fetchSpeech(input, init);
+    return this.fetchImpl(input, init);
   };
+  onSttChange(listener) {
+    this.sttListeners.add(listener);
+    return () => this.sttListeners.delete(listener);
+  }
+  setStt(status, error = "") {
+    if (this.stt.status === status && this.stt.error === error) return;
+    this.stt = { ...this.stt, status, error };
+    if (status === "error") this.log("stt error");
+    for (const listener of this.sttListeners) {
+      try {
+        listener({ ...this.stt });
+      } catch {
+        // Extension failures must not turn a healthy TTS server into an error.
+        this.log("stt listener error");
+      }
+    }
+  }
+  activityChanged() {
+    for (const listener of [...this.activityListeners]) listener();
+  }
+  waitForActivity(signal) {
+    signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        this.activityListeners.delete(finish);
+        signal.removeEventListener("abort", finish);
+        if (signal.aborted) reject(signal.reason);
+        else resolve();
+      };
+      this.activityListeners.add(finish);
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+  async fetchSpeech(input, init) {
+    const callerSignal =
+      init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = AbortSignal.any([
+      this.shutdown.signal,
+      ...(callerSignal ? [callerSignal] : []),
+    ]);
+    signal.throwIfAborted();
+    // Count CPU requests waiting for STT too: the next STT must yield to them.
+    this.ttsActive++;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      this.ttsActive--;
+      this.activityChanged();
+    };
+    try {
+      while (this.settings.active.backend === "cpu" && this.sttActive)
+        await this.waitForActivity(signal);
+      signal.throwIfAborted();
+      const response = await this.fetchImpl(input, { ...init, signal });
+      return trackedResponse(response, signal, release);
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+  async transcribe(wav, { signal: callerSignal } = {}) {
+    const signal = AbortSignal.any([
+      this.shutdown.signal,
+      ...(callerSignal ? [callerSignal] : []),
+    ]);
+    signal.throwIfAborted();
+    const ready = () => {
+      if (this.stt.status !== "ready" || !this.recognition)
+        throw Error(this.stt.error || "音声認識は準備できていません");
+    };
+    ready();
+    while (this.ttsActive || this.sttActive) await this.waitForActivity(signal);
+    signal.throwIfAborted();
+    ready();
+    this.sttActive = true;
+    try {
+      const form = new FormData();
+      form.append(
+        "file",
+        new Blob([wav], { type: "audio/wav" }),
+        "utterance.wav",
+      );
+      form.append("model", this.recognition.id);
+      form.append("response_format", "json");
+      if (
+        this.recognition.speech.options?.some(
+          (option) => option.name === "language",
+        )
+      )
+        form.append("language", "ja");
+      // The priority wait above is unbounded. Only the HTTP request and body
+      // have a deadline, so a stalled recognizer cannot keep CPU TTS waiting.
+      const requestSignal = AbortSignal.any([
+        signal,
+        AbortSignal.timeout(this.transcriptionTimeout),
+      ]);
+      const response = await this.fetchImpl(
+        `${this.provider({}).baseUrl}/v1/audio/transcriptions`,
+        { method: "POST", body: form, signal: requestSignal },
+      );
+      if (!response.ok) {
+        let message = "";
+        try {
+          message = String((await response.json()).error?.message ?? "")
+            .replace(/[\u0000-\u001f\u007f]/g, " ")
+            .slice(0, 300);
+        } catch {
+          requestSignal.throwIfAborted();
+        }
+        throw Error(
+          `音声認識 HTTP ${response.status}${message ? `: ${message}` : ""}`,
+        );
+      }
+      const { text } = await response.json();
+      return typeof text === "string" ? text.trim() : "";
+    } finally {
+      this.sttActive = false;
+      this.activityChanged();
+    }
+  }
+  async preflightStt() {
+    this.sttModel = undefined;
+    if (!this.stt.enabled) return;
+    const { model } = this.settings.active.stt;
+    try {
+      if (!statSync(model).isFile()) throw Error();
+      accessSync(model, constants.R_OK);
+    } catch {
+      this.setStt("error", "STTモデルが見つからないか読み取れません");
+      return;
+    }
+    try {
+      const [program, ...args] = this.models.speech;
+      const { stdout } = await runFile(
+        program,
+        [...args, "info", model, "--json"],
+        {
+          windowsHide: true,
+          timeout: 10000,
+          maxBuffer: 1024 * 1024,
+          signal: this.shutdown.signal,
+        },
+      );
+      if (JSON.parse(stdout).task !== "recognition") {
+        this.setStt(
+          "error",
+          "指定したファイルは音声認識のモデルではありません",
+        );
+        return;
+      }
+      this.sttModel = model;
+    } catch {
+      if (!this.closing)
+        this.setStt(
+          "error",
+          "STTモデルを確認できません。ファイルと同梱のspeechを確認してください",
+        );
+    }
+  }
+  async loadRecognition(signal) {
+    if (!this.sttModel) return;
+    try {
+      const response = await this.fetchImpl(
+        `${this.provider({}).baseUrl}/v1/models`,
+        { signal },
+      );
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw Error();
+      }
+      const { data } = await response.json();
+      this.recognition = Array.isArray(data)
+        ? data.find(
+            (model) =>
+              model?.speech?.task === "recognition" &&
+              typeof model.id === "string",
+          )
+        : undefined;
+      if (!this.recognition) throw Error();
+    } catch {
+      if (!this.closing && this.stt.status === "starting")
+        this.setStt(
+          "error",
+          "speech serveに音声認識モデルがありません。STTモデルを確認してください",
+        );
+    }
+  }
   log(event) {
     // Only our fixed lifecycle messages are stored. Never persist upstream
     // stdout/stderr: speech's startup output includes an admin access URL.
@@ -109,6 +385,7 @@ export class SpeechRuntime {
       join(this.runtimeDir, `${vulkan ? "speech-vulkan" : "speech"}${suffix}`),
       "serve",
       model,
+      ...(this.sttModel ? [this.sttModel] : []),
       "--host",
       "127.0.0.1",
       "--port",
@@ -119,6 +396,8 @@ export class SpeechRuntime {
     ];
   }
   async acquire() {
+    await this.preflightStt();
+    if (this.closing) return;
     const suffix = process.platform === "win32" ? ".exe" : "";
     const args = [join(this.dataDir, "bridge.lock")];
     if (this.settings.active.mode === "bundled")
@@ -185,8 +464,12 @@ export class SpeechRuntime {
     }
   }
   fail(message) {
+    if (this.sttModel && this.status === "starting")
+      message += "。STTを無効にして再起動してください";
     this.status = "error";
     this.error = message;
+    if (this.stt.enabled) this.setStt("error", message);
+    this.shutdown.abort(Error(message));
     this.log("error");
   }
   async start() {
@@ -226,9 +509,12 @@ export class SpeechRuntime {
     ) {
       if (this.listening && this.childAlive) {
         try {
-          const response = await fetch(`http://127.0.0.1:${ttsPort}/health`, {
-            signal: AbortSignal.timeout(1000),
-          });
+          const response = await this.fetchImpl(
+            `http://127.0.0.1:${ttsPort}/health`,
+            {
+              signal: AbortSignal.timeout(1000),
+            },
+          );
           await response.body?.cancel();
           if (
             response.ok &&
@@ -250,7 +536,19 @@ export class SpeechRuntime {
             }
             if (this.closing || !this.childAlive || this.status !== "starting")
               return;
+            await this.loadRecognition(
+              AbortSignal.any([
+                this.shutdown.signal,
+                AbortSignal.timeout(
+                  Math.max(1, Math.min(5000, deadline - Date.now())),
+                ),
+              ]),
+            );
+            if (this.closing || !this.childAlive || this.status !== "starting")
+              return;
             this.status = "ready";
+            if (this.recognition && this.stt.status === "starting")
+              this.setStt("ready");
             this.log("ready");
             return;
           }
@@ -269,6 +567,8 @@ export class SpeechRuntime {
   }
   async close() {
     this.closing = true;
+    this.shutdown.abort(new DOMException("Bridgeは終了中です", "AbortError"));
+    if (this.stt.enabled) this.setStt("off");
     await this.references.close();
     await this.models.close();
     if (!this.helper) return;

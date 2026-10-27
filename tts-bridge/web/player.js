@@ -188,8 +188,54 @@ function renderLog() {
   chat.render();
 }
 function restoreLog(snapshot) {
+  renderTranscription(snapshot);
   if (applyChatState(snapshot)) chat.state({ ...meta, ...snapshot }, true);
 }
+let transcriptBusy = false;
+function renderTranscription(snapshot) {
+  if (!snapshot.transcription) return;
+  $("transcriptDownloads").hidden = !snapshot.transcription.enabled;
+  $("downloadTranscripts").disabled = transcriptBusy || ended;
+}
+$("downloadTranscripts").onclick = async () => {
+  if (transcriptBusy || ended || !meta?.roomId) return;
+  transcriptBusy = true;
+  $("downloadTranscripts").disabled = true;
+  $("transcriptDownloadStatus").textContent = "ダウンロードしています…";
+  try {
+    const response = await bridge.request(
+      bridge.room(meta.roomId, "transcripts"),
+    );
+    const blob = await response.blob();
+    if (ended) return;
+    // The live response includes records made since the last state snapshot.
+    if (response.headers.get("X-Transcript-Count") === "0") {
+      $("transcriptDownloadStatus").textContent = "まだ文字起こしはありません";
+      return;
+    }
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const filename =
+      disposition.match(/filename="([^"]+)"/i)?.[1] ??
+      disposition.match(/filename=([^;\s]+)/i)?.[1];
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename?.replace(/[\\/]/g, "_") || "transcripts.zip";
+    document.body.append(link);
+    try {
+      link.click();
+      $("transcriptDownloadStatus").textContent = "ダウンロードしました。";
+    } finally {
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  } catch (error) {
+    if (!ended) $("transcriptDownloadStatus").textContent = error.message;
+  } finally {
+    transcriptBusy = false;
+    $("downloadTranscripts").disabled = ended;
+  }
+};
 let muteKey;
 function renderMutes(characters) {
   const nextKey = JSON.stringify(
@@ -270,6 +316,7 @@ function connect() {
     if (!applyChatState(n)) return;
     if (n.type === "hello") {
       meta = { ...meta, ...n };
+      renderTranscription(n);
       chat.state(meta, true);
       refreshCharacters(n.roomId);
       offset = n.serverTime - Date.now();
@@ -423,6 +470,7 @@ function endConnection(message) {
   $("speaker").textContent = "";
   $("enable").disabled = true;
   $("latest").disabled = true;
+  $("downloadTranscripts").disabled = true;
   $("newCharacterDialog").close();
   status(message);
 }

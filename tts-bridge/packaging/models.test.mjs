@@ -222,3 +222,27 @@ test("credits use the supplied repository for the link and label", async () => {
     "https://github.com/another/speech.cpp/tree/abcdef012345",
   );
 });
+
+test("recognition catalog exposes four Japanese models and shares the download reservation", async (t) => {
+  const { models, dir } = await setup(t);
+  writeFileSync(join(dir, "mode"), "recognition");
+  const listed = await models.list();
+  const recognition = listed.models.filter((m) => m.task === "recognition");
+  assert.equal(recognition.length, 16);
+  assert.equal(listed.models.filter((m) => m.task === "synthesis").length, 8);
+  assert.ok(
+    !listed.models.some(
+      (m) =>
+        m.choice.endsWith(":f16") ||
+        m.choice.startsWith("parakeet-tdt-0.6b-v3:"),
+    ),
+  );
+  await models.pull("qwen3-asr-0.6b:q8_0");
+  await assert.rejects(models.pull(choice), { status: 409 });
+  await models.finished;
+  assert.equal(models.job.status, "done");
+  assert.ok(
+    (await models.list()).models.find((m) => m.choice === "qwen3-asr-0.6b:q8_0")
+      .fetched,
+  );
+});

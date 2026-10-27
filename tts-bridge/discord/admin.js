@@ -38,6 +38,8 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
     </details>
     <label><input data-id="enabled" type="checkbox">Discord Botに接続する</label>
     <p data-id="status" role="status"></p>
+    <p data-id="transcription" role="status"></p>
+    <p data-id="transcriptionNote" hidden>文字起こし中は、Botがスピーカーミュートになりません。</p>
     <p data-id="error" role="alert"></p>
     <p data-id="notice" role="status"></p>
     <label>Botトークン<input data-id="token" type="password" autocomplete="new-password" maxlength="200"></label>
@@ -104,6 +106,14 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
             : undefined,
     );
     $("status").textContent = states[s.state] ?? s.state;
+    const transcription = s.transcription;
+    $("transcription").textContent =
+      `文字起こし：${transcription?.error ? `エラー：${transcription.error}` : transcription?.enabled ? `有効（${transcription.count ?? 0}件）` : "無効"}`;
+    if (transcription?.pending > 20)
+      $("transcription").textContent += `・順番待ち ${transcription.pending}件`;
+    if (transcription?.dropped)
+      $("transcription").textContent += `・破棄 ${transcription.dropped}件`;
+    $("transcriptionNote").hidden = !transcription?.enabled;
     $("error").textContent = !s.installed
       ? "cd discord && npm ci を実行してください"
       : s.error;

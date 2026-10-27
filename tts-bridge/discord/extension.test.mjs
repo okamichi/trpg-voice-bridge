@@ -402,3 +402,37 @@ test("voice selected for greetings is reported as used even when Bot is disabled
   });
   assert.deepEqual(ext.voiceProfileUses(), { voice: ["Discord入退室"] });
 });
+
+test("transcription bridge and greeting text are passed to Bot and status includes shared counts without login", async (t) => {
+  let count = 12,
+    error = "";
+  const transcription = {
+    ready: () => !error,
+    snapshot: () => ({ enabled: true, count, error }),
+  };
+  const f = setup(t, { transcription });
+  assert.deepEqual((await f.request("status")).data.transcription, {
+    enabled: true,
+    ready: true,
+    count: 12,
+    error: "",
+  });
+  await f.request("settings", "PUT", { enabled: true, token: "secret" });
+  assert.equal(f.bots[0].options.transcription, transcription);
+  assert.equal(
+    f.bots[0].options.greetingText("enter"),
+    f.saved().greeting.enterText,
+  );
+  assert.equal(
+    f.bots[0].options.greetingText("leave"),
+    f.saved().greeting.leaveText,
+  );
+  count = 15;
+  error = "書き出せません";
+  assert.deepEqual((await f.request("status")).data.transcription, {
+    enabled: true,
+    ready: false,
+    count: 15,
+    error,
+  });
+});

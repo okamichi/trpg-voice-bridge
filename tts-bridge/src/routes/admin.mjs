@@ -242,7 +242,10 @@ export async function adminRoutes(ctx, req, res, url) {
           throw new HttpError(400, e.message);
         }
       } else check(method === "GET", "許可されていない操作です", 405);
-      return json(res, 200, runtime.snapshot());
+      return json(res, 200, {
+        ...runtime.snapshot(),
+        transcription: ctx.transcripts?.snapshot() ?? null,
+      });
     }
     if (startupSettings && path === "/api/v1/admin/startup") {
       if (method === "GET") return json(res, 200, startupSettings());
@@ -310,7 +313,14 @@ export async function adminRoutes(ctx, req, res, url) {
       }
       return json(res, 200, {
         ...engine.metadata(),
-        ...(runtime ? { runtime: runtime.snapshot() } : {}),
+        ...(runtime
+          ? {
+              runtime: {
+                ...runtime.snapshot(),
+                transcription: ctx.transcripts?.snapshot() ?? null,
+              },
+            }
+          : {}),
         canShutdown: Boolean(onShutdown),
         canRestart: Boolean(onRestart),
         accepting: engine.accepting,

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 export const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 export async function until(fn) {
   for (let i = 0; i < 200; i++) {
@@ -18,6 +19,7 @@ export function fakeEngine() {
     provider: { type: "mock" },
   };
   engine.audioFile = () => engine.file;
+  engine.orderText = () => null;
   return engine;
 }
 export function fakeDiscord({ autoReady = true, autoIdle = true } = {}) {
@@ -36,7 +38,16 @@ export function fakeDiscord({ autoReady = true, autoIdle = true } = {}) {
       id,
       name,
       voiceAdapterCreator: {},
-      members: { me: {} },
+      members: {
+        me: {},
+        cache: new Map(),
+        async fetch(id) {
+          calls.push(["member", id]);
+          return (
+            this.cache.get(id) ?? { displayName: id, user: { bot: false } }
+          );
+        },
+      },
       channels: { cache: new Map() },
     };
     for (const [index, allowed] of [
@@ -81,6 +92,12 @@ export function fakeDiscord({ autoReady = true, autoIdle = true } = {}) {
       super();
       this.joinConfig = options;
       this.state = { status: "connecting" };
+      this.receiver = fakeReceiver();
+    }
+    rejoin(options) {
+      calls.push(["rejoin", options]);
+      Object.assign(this.joinConfig, options);
+      return true;
     }
     set(status) {
       const old = this.state;
@@ -112,6 +129,15 @@ export function fakeDiscord({ autoReady = true, autoIdle = true } = {}) {
       Destroyed: "destroyed",
     },
     StreamType: { Raw: "raw" },
+    EndBehaviorType: { AfterSilence: 1 },
+    OpusScript: class {
+      static Application = { AUDIO: 1 };
+      decode(packet) {
+        if (packet[0] === 255) throw new Error("damaged");
+        return packet;
+      }
+      delete() {}
+    },
     createAudioPlayer() {
       const player = new EventEmitter();
       player.stop = () => {
@@ -171,8 +197,81 @@ export function fakeDiscord({ autoReady = true, autoIdle = true } = {}) {
     resources,
     players,
     clients,
+    guilds,
     failNextPlay: () => {
       failPlay = true;
     },
+  };
+}
+
+export function fakeReceiver() {
+  const speaking = new EventEmitter();
+  speaking.users = new Map();
+  const subscriptions = new Map(),
+    options = [];
+  return {
+    speaking,
+    subscriptions,
+    options,
+    subscribe(id, opts) {
+      if (subscriptions.has(id)) return subscriptions.get(id);
+      const stream = new Readable({ objectMode: true, read() {} });
+      stream.once("close", () => {
+        if (subscriptions.get(id) === stream) subscriptions.delete(id);
+      });
+      subscriptions.set(id, stream);
+      options.push(opts);
+      return stream;
+    },
+    speak(id, ...packets) {
+      if (!speaking.users.has(id)) {
+        speaking.users.set(id, Date.now());
+        speaking.emit("start", id);
+      }
+      for (const packet of packets) subscriptions.get(id)?.push(packet);
+    },
+    async pause(id) {
+      speaking.users.delete(id);
+      const stream = subscriptions.get(id);
+      if (!stream) return;
+      const closed = new Promise((resolve) => stream.once("close", resolve));
+      stream.push(null);
+      stream.resume();
+      await closed;
+    },
+  };
+}
+
+export function fakeTranscription(ready = true) {
+  const listeners = new Set(),
+    entries = [],
+    drops = [],
+    requests = [];
+  return {
+    entries,
+    drops,
+    requests,
+    listeners,
+    ready: () => ready,
+    onChange(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    change(value) {
+      ready = value;
+      for (const fn of listeners) fn();
+    },
+    snapshot: () => ({
+      enabled: true,
+      ready,
+      count: entries.length,
+      error: "",
+    }),
+    async transcribe(wav, { signal }) {
+      requests.push({ wav, signal });
+      return "扉を開けます";
+    },
+    add: (entry) => entries.push(entry),
+    dropped: (reason, count) => drops.push([reason, count]),
   };
 }

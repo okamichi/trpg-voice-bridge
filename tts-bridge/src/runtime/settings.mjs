@@ -28,11 +28,33 @@ export function validateRuntime(value, backends = platformBackends()) {
   const backend = value.backend ?? backends[0];
   if (!backends.includes(backend))
     throw exposed(`内蔵TTSの種類は${backends.join("、")}から指定してください`);
+  const stt =
+    value.stt === undefined
+      ? { enabled: false, model: "", logDir: "" }
+      : value.stt;
+  if (!stt || typeof stt !== "object" || typeof stt.enabled !== "boolean")
+    throw exposed("STTの設定が不正です");
+  if (
+    typeof stt.model !== "string" ||
+    stt.model.includes("\0") ||
+    (stt.model && (!isAbsolute(stt.model) || !/\.gguf$/i.test(stt.model)))
+  )
+    throw exposed("STTモデルはGGUFファイルの絶対パスを指定してください");
+  if (
+    typeof stt.logDir !== "string" ||
+    stt.logDir.includes("\0") ||
+    (stt.logDir && !isAbsolute(stt.logDir))
+  )
+    throw exposed("文字起こしの書き出し先は絶対パスを指定してください");
+  if (stt.enabled && !stt.model) throw exposed("STTモデルを指定してください");
+  if (stt.enabled && value.mode !== "bundled")
+    throw exposed("STTは内蔵speech.cppのときだけ有効にできます");
   return {
     mode: value.mode,
     model: value.model,
     ttsPort: value.ttsPort,
     backend,
+    stt: { enabled: stt.enabled, model: stt.model, logDir: stt.logDir },
   };
 }
 

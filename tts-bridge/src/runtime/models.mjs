@@ -10,6 +10,12 @@ const failure = (message, status = 500) =>
   Object.assign(Error(message), { status });
 const active = (job) =>
   ["starting", "running", "stopping"].includes(job?.status);
+const recognitionModels = new Set([
+  "qwen3-asr-0.6b",
+  "qwen3-asr-1.7b",
+  "reazonspeech-v2",
+  "parakeet-tdt_ctc-0.6b-ja",
+]);
 
 export class SpeechModels {
   constructor({ dataDir, speech, supervisor }) {
@@ -102,12 +108,17 @@ export class SpeechModels {
   }
   models(data) {
     return data.models
-      .filter((m) => ["irodori-tts", "irodori-tts-large"].includes(m.name))
+      .filter(
+        (m) =>
+          ["irodori-tts", "irodori-tts-large"].includes(m.name) ||
+          recognitionModels.has(m.name),
+      )
       .flatMap((m) =>
         m.files
           .filter((f) => ["q8_0", "q6_k", "q5_k", "q4_k"].includes(f.type))
           .map((f) => ({
             choice: `${m.name}:${f.type}`,
+            task: recognitionModels.has(m.name) ? "recognition" : "synthesis",
             label: `${m.repository
               .split("/")
               .at(-1)

@@ -67,3 +67,39 @@ export function toDiscordPcm(wav) {
   }
   return out;
 }
+
+export const DISCORD_RATE = 48000;
+export const DISCORD_FRAME_BYTES = 4;
+
+export function seconds(discordPcm) {
+  return discordPcm.length / (DISCORD_RATE * DISCORD_FRAME_BYTES);
+}
+
+// 48kHz stereo -> 48kHz mono. The rate is left to speech.cpp, which resamples.
+export function toMono(discordPcm) {
+  const frames = Math.floor(discordPcm.length / DISCORD_FRAME_BYTES);
+  const out = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++)
+    out.writeInt16LE(
+      (discordPcm.readInt16LE(i * 4) + discordPcm.readInt16LE(i * 4 + 2)) >> 1,
+      i * 2,
+    );
+  return out;
+}
+
+export function wavFile(pcm, rate, channels = 1) {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVEfmt ", 8, "ascii");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * channels * 2, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36, "ascii");
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
