@@ -1,85 +1,95 @@
-# 各コンポーネントと組み合わせ
+# 構成と使い分け
 
-TRPG Voice Bridgeを構成する部品の役割と、使い方ごとにどの部品が必要かをまとめます。
+卓の発言を入力し、声を生成し、参加者へ届けるための部品を説明します。実際の導入は[セットアップガイド](setup-guide.md)へ進んでください。
 
-## 全体像
+## 全体の流れ
 
-```text
-[音声担当者のPC]
-  TTS（外部 or 内蔵） <--セリフ・WAV--> Bridge :8090 <--設定・状態-- 管理画面（音声担当者）
-                                          ^  ^  |
-          VTTのタブ --新しい公開発言--> Collector  |  +--音声--> Discord Bot --> ボイスチャンネル
-                                             |  |
-[各参加者のPC]                               |  |
-  ブラウザ: Player /player/ <--チャット・声設定・音声--+
-  Chrome:   Chatter（サイドパネル） <--チャット・声設定・音声--+
-```
+![TRPG Voice Bridgeのコンポーネント図](../compornent.png)
 
 ```mermaid
 flowchart LR
-  subgraph Host["音声担当者のPC"]
-    HostVTT["VTTのタブ<br/>FVTT・ユドナリウム・ココフォリアなど"]
-    Collector["Collector<br/>Chrome拡張"]
-    Admin["管理画面 /admin/"]
-    Bridge["Bridge :8090"]
-    TTS["TTS<br/>外部 or 内蔵"]
-    Bot["Discord Bot<br/>Bridgeの中で動く"]
-  end
-
-  subgraph Participants["各参加者のPC"]
-    PVTT["VTTの画面<br/>D&D Beyond Mapsなど"]
-    Player["Player /player/<br/>ブラウザ"]
-    Chatter["Chatter<br/>Chromeのサイドパネル"]
-  end
-
-  VC["Discordのボイスチャンネル"]
-
-  HostVTT -->|新しい公開発言| Collector
-  Collector -->|発言| Bridge
-  Admin <-->|設定・状態| Bridge
-  Bridge -->|セリフ| TTS
-  TTS -->|WAV| Bridge
-  Player <-->|チャット・声設定・音声| Bridge
-  Chatter <-->|チャット・声設定・音声| Bridge
-  PVTT -. 隣に表示 .- Chatter
-  Bridge -->|音声| Bot
-  Bot -->|音声| VC
+  VTT[既存VTTの公開チャット] --> Collector[Collector拡張]
+  Collector --> Bridge[Bridge]
+  Player[Player] <-->|チャット・声設定・音声| Bridge
+  Chatter[Chatterサイドパネル] <-->|チャット・声設定・音声| Bridge
+  Admin[管理画面] <-->|設定・開始・停止| Bridge
+  Bridge -->|生成依頼| TTS[TTSサーバー]
+  TTS -->|音声| Bridge
+  Bridge --> Bot[Discord Bot]
+  Bot --> VC[ボイスチャンネル]
+  Bot <-->|声づくり| Text[専用テキストチャンネル]
 ```
 
-- Bridgeが中心です。ほかの部品はすべてBridgeにつながります。
-- Collectorは「VTTのチャットを取り込む」入口、PlayerとChatterは「Bridge自身のチャットで発言する」入口の役目があります。
-- 音声の出口は、Player・Chatter・Discord Botの3つあります。
+Player・Chatterから直接発言する場合、Collectorは不要です。TTSを使わずに文字だけで会話することもできます。
 
-## コンポーネント
+## 音声担当者と参加者
 
-### Bridge
+**音声担当者**はBridgeとTTSを動かし、管理画面で接続・読み上げ・参加URLを管理します。GMでもPLでも担当でき、VTTのGM権限は必須ではありません。既存チャットを取り込む担当者は、同じチャットにつき一人にします。
 
-| 項目 | 内容 |
-| --- | --- |
-| 役割 | 発言を受け取り、キャラの声を選んでTTSに音声を作らせ、Player・Chatter・Discord Botに配る。管理画面とPlayerのページも配信する |
-| 動かす場所 | 音声担当者のPC。既定は `http://127.0.0.1:8090` |
-| 起動 | ダウンロードしたアプリは `trpg-voice-bridge`（Windowsは `.exe`）。ソースからは `tts-bridge/` で `npm start` |
-| 保存するもの | 保存先（管理画面の「0 起動設定」か `--data-dir`）の `bridge.sqlite` に、設定・キャラ・声と、チャット本文（直近7日・卓ごとに最大10,000件）。音声のWAVは `audio/` の一時ファイル |
-| 公開 | 既定では同じPCからしか開けない。別のPCの参加者にPlayer・Chatterを使わせるときは、管理画面の「0 起動設定」で待ち受けアドレスと公開Originを設定する（[Playerの公開](online.md)） |
+**参加者**はPlayer・Chatterで声を設定し、チャットや再生を利用します。既存VTTのチャットを使ってDiscordで聞く場合は、Playerを開かずに参加することもできます。
 
-外のアドレスから使えるのは、PlayerとChatterの参加者用の機能だけです。管理画面とCollectorの接続は、`127.0.0.1` でしか受け付けません。
+## 各部品の役割
 
-### TTSサーバー（外部・内蔵）
+| 部品        | 動かす場所                         | 主な役割                                                           |
+| ----------- | ---------------------------------- | ------------------------------------------------------------------ |
+| Bridge      | 音声担当者のPC                     | キャラと声を管理し、音声生成を依頼して参加者へ配信する             |
+| 管理画面    | 音声担当者のブラウザ               | TTS・Collector・Discordの接続、読み上げの開始・停止、参加URLの発行 |
+| TTS         | 同じPC、または別途用意したサーバー | Irodoriモデルから音声を生成する                                    |
+| Collector   | 音声担当者のChrome                 | 接続したVTTタブの新しい公開キャラ発言をBridgeへ送る                |
+| Player      | 参加者のブラウザ                   | チャット、声の共同編集、音声再生                                   |
+| Chatter     | 利用する参加者のChrome（116以上）  | Playerに相当する機能をVTTの横のサイドパネルで使う                  |
+| Discord Bot | BridgeからDiscordへ接続            | VCへ音声を流し、専用テキストチャンネルで声づくりを行う             |
 
-セリフから音声（WAV）を作ります。Bridgeとは別の部品で、外部と内蔵のどちらかを使います。
+管理画面とPlayerはBridgeが配信するページです。参加者がそれぞれWebサーバーやTTSを用意する必要はありません。ChatterはVTTへチャット機能を注入せず、独立したBridgeのチャットを表示します。
 
-| | 外部TTS | 内蔵TTS |
-| --- | --- | --- |
-| 中身 | Bridgeとは別に起動した Irodori-TTS-Server、speech.cpp本家、互換フォーク | アプリに同梱した speech.cpp本家 |
-| 起動 | 別のターミナルで自分で起動・停止する | Bridgeが起動・停止する |
-| 使える起動方法 | ソースから（`npm start`）でも、ダウンロードしたアプリでも | ダウンロードしたアプリ（または自分で作った実行ファイル）だけ。`npm start` では使えない |
-| 設定 | 管理画面「1 TTSの準備」の「TTS接続先」で種類とURLを指定（既定 `http://127.0.0.1:8088`） | 管理画面「1 TTSの準備」→「TTSの起動設定」で起動方式を「内蔵speech.cpp」にし、モデルをダウンロードする。Windowsは「Vulkan」（GPUあり）か「CPU」 |
-| 参照音声の保存先 | Bridge経由で登録した元WAVはBridgeの `voices/`。Irodoriは自身の保存機能も使う | Bridgeの保存先の `voices/`。起動時にTTSへ復元する |
+## チャットと再生先を選ぶ
 
-- どちらも、外に公開しません。内蔵TTSは `127.0.0.1` だけで待ち受けます。外部TTSも `--host 127.0.0.1` で起動します。
-- 読み上げを使わず文字のチャットだけなら、TTSは要りません。TTSが未接続でも、チャット本文は届きます。
+| 入力する場所        | 聞く場所   | 必要なもの                                            |
+| ------------------- | ---------- | ----------------------------------------------------- |
+| 対応VTTのチャット   | ブラウザ   | Bridge・TTS・Collector、参加者のPlayerまたはChatter   |
+| 対応VTTのチャット   | Discord VC | Bridge・TTS・Collector・Discord Bot                   |
+| Playerのチャット    | ブラウザ   | Bridge・TTS、参加者のPlayer                           |
+| Chatterのチャット   | ブラウザ   | Bridge・TTS、使う参加者のChatter                      |
+| PlayerまたはChatter | Discord VC | Bridge・TTS・Discord Bot、参加者のPlayerまたはChatter |
+| PlayerまたはChatter | 文字だけ   | Bridge、参加者のPlayerまたはChatter                   |
+
+VTTとPlayer・Chatterの発言は、同じ卓の履歴へ集まります。Player・Chatterの投稿をVTTへ送り返す機能はありません。
+
+ブラウザとDiscordで同時に音声を有効にすると二重に聞こえます。参加者ごとに聞く場所を一つ選びます。ブラウザごとのミュートはDiscord Botへ反映されません。
+
+## TTSを選ぶ
+
+| 項目           | 内蔵speech.cpp               | 外部speech.cpp                      | 外部Irodori-TTS-Server・互換フォーク                           |
+| -------------- | ---------------------------- | ----------------------------------- | -------------------------------------------------------------- |
+| 利用するBridge | 配布アプリ                   | アプリ・ソース起動                  | アプリ・ソース起動                                             |
+| 起動・停止     | Bridgeが行う                 | 利用者が別に行う                    | 利用者が別に行う                                               |
+| モデル指定     | 管理画面から取得・選択       | TTS側で指定                         | TTS側で指定                                                    |
+| 接続先の種類   | Bridgeが本家speech.cppを選ぶ | 「speech.cpp（本家）」              | 「Irodori-TTS-Server / speech.cpp互換フォーク」                |
+| 参照音声       | Bridgeが元WAVを保存して復元  | Bridgeが元WAVを保存して不足分を登録 | TTS側の保存機能を利用。Bridgeから登録した元WAVはBridgeにも保存 |
+
+外部とはBridgeが起動管理しない意味で、同じPC上の別プロセスも含みます。また、本家speech.cppの参照音声の登録にはローカル接続が必要です。
+
+内蔵のspeech.cppではモデル読込後に管理対象の音声を一括確認・復元し、それから準備完了になります。外部では生成に使う音声を生成前に確認し、不足分を復元します。全件の確認・復元は管理画面から実行できます。
+
+## Bridgeを公開するか
+
+参加者が別PCからPlayer・Chatterへ接続するには、[待ち受けと公開Origin](online.md)の設定が必要です。管理画面とCollectorは、音声担当者のローカルURLを使います。TTSを参加者へ公開する必要はありません。
+
+既存VTTのチャットをCollectorで取り込み、Discordで聞くなら、Bridgeの公開は不要です。声設定も、音声担当者のPlayer、VTTの即時登録コマンド、Discordの声づくりフォームから行えます。
+
+## データを置く場所
+
+卓の設定・キャラ・声の割り当て・履歴はBridgeの保存先に置きます。Bridgeが登録した参照音声もここへ保存します。モデルの保存先と、外部TTS独自の参照音声の保存先は別に扱います。
+
+卓ごとに保存先を分けると、キャラや設定を切り替えられます。保存先の変更だけではデータは移動しません。[保存・バックアップ](setup-guide.md#保存とバックアップ)を確認してください。
+
+## コンポーネント詳細
 
 ### Collector
+
+Collectorは、Chromeの機能拡張(同じアーキテクチャのブラウザのEdgeでも動作する可能性あり)で、Chromeブラウザにインストールして使用します。
+
+CollectorはFoundryVTTやユドナリウム、ココフォリアなどのメインのチャットを監視し、キャラの新しい発言があれば、そのセリフデータを取得し、Bridgeサーバに送信する役割があります。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -91,9 +101,11 @@ flowchart LR
 | 接続 | VTTのタブで接続する。初回は、拡張に表示された確認コードを管理画面「3 Collectorの接続」で承認する |
 
 - 接続した後の新しい発言だけを送ります。表示済みの履歴、ささやき・シークレット・ダイスだけの発言などは読み上げません（詳細は [Collectorとは](setup-guide.md#collectorとは)）。
-- チャットのないVTTでは使いません。
+- チャットのないVTTでは、チャットの内容を取得する必要がないため、利用しません。
 
-### 管理画面
+### Bridge 管理画面
+
+Bridgeを起動すると開く画面です。ここで音声生成担当者はBridge全般の設定を行います。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -101,8 +113,9 @@ flowchart LR
 | 開く場所 | 音声担当者のブラウザで `http://127.0.0.1:8090/admin/`。起動時に管理用リンクが自動で開く。外のアドレスからは開けない |
 | 使う人 | 音声担当者だけ。管理用リンクは共有しない |
 
-手順の番号順に使います。
+番号順に設定してください。
 
+0. **起動設定** : 保存する場所などを設定
 1. **TTSの準備**：外部TTSの接続先、または内蔵TTSの起動方式とモデル
 2. **Discord Bot**：Botのトークンとボイスチャンネル（使う場合だけ）
 3. **Collectorの接続**：VTTの既存チャットを取り込む場合だけ
@@ -139,6 +152,8 @@ flowchart LR
 - Bridgeを更新したら、ZIPをダウンロードし直して読み込み直します。
 
 ### Discord Bot
+
+DiscordのAPIを利用して、あらかじめ作成したDiscord Bot に接続し、ボイスチャンネルで生成した声を流します。また、簡易的なキャラクターの声のデザイン機能も備えています。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -211,22 +226,3 @@ TTSを用意せず、PlayerかChatterのチャットだけを使います。TTS�
 
 パターン1・2でも、PlayerとChatterのチャットは使えます。Collectorで取り込んだ発言のうち共有対象のものは、Player・Chatterのチャットと同じ履歴に入ります。
 
-## 共通の選び方
-
-### TTSを外部にするか内蔵にするか
-
-| 起動方法 | 使えるTTS |
-| --- | --- |
-| ダウンロードしたアプリ | 内蔵か外部を、管理画面で切り替えられる |
-| ソースから `npm start` | 外部だけ |
-
-### Bridgeを公開するか
-
-| 状況 | 公開 |
-| --- | --- |
-| 全員が音声担当者のPCで操作する、または参加者はDiscordで聞くだけ | 不要 |
-| 別のPCの参加者がPlayer・Chatterを使う | 必要（同じLANならLANのアドレス、インターネット越しならグローバルアドレスを公開Originに指定） |
-
-### 音声を聞く場所
-
-Player・Chatter・Discordのうち、一人につき一つにしてください。複数で音声を有効にすると、二重に聞こえます。
