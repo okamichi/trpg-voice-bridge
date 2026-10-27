@@ -50,8 +50,11 @@ ZIPを解凍してできた次の実行ファイルをクリックして起動�
 % git clone https://github.com/okamichi/trpg-voice-bridge
 % cd trpg-voice-bridge/tts-bridge
 % npm ci
+% npm run package:speech
 % npm start
 ```
+
+`npm run package:speech` は内蔵TTSのspeech.cppをビルドします。CMakeとC++のビルド環境が必要です。macOS（Apple Silicon）とWindows（x64）以外では、このコマンドを飛ばすと外部TTSだけで起動します。
 
 詳細な起動方法については、[ソースからのビルドと起動](docs/build.md)を参照してください。
 

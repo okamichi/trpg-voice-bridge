@@ -188,13 +188,13 @@ Playerの「登録済みの声を整理」を開くと、登録数と、声の�
 
 起動するときに保存先を指定することもできます。指定した保存先は「0 起動設定」より優先され、「0 起動設定」では変更できなくなります。
 
-`npm start` では、`TTS_DATA_DIR` を卓ごとに変えて起動します。初期値も卓ごとに用意する場合は、`TTS_CONFIG_FILE` も指定します。
+`npm start` では、`TTS_DATA_DIR` を卓ごとに変えて起動します（`npm start -- --data-dir ~/trpg/campaign-a/data` でも指定できます）。初期値も卓ごとに用意する場合は、`TTS_CONFIG_FILE` も指定します。
 
 ```sh
 TTS_DATA_DIR=~/trpg/campaign-a/data TTS_CONFIG_FILE=~/trpg/campaign-a/config.json npm start
 ```
 
-ダウンロードしたアプリや、自分でビルドした実行ファイルでは、`--data-dir` を卓ごとに変えます。アプリでは、同じ保存先のBridgeを同時に二つ起動することはできません。
+ダウンロードしたアプリや、自分でビルドした実行ファイルでは、`--data-dir` を卓ごとに変えます。同じ保存先のBridgeを同時に二つ起動することはできません（外部TTSだけで起動する環境の `npm start` を除く）。
 
 ```sh
 ./trpg-voice-bridge --data-dir ~/trpg/campaign-a/data
@@ -205,7 +205,7 @@ TTS_DATA_DIR=~/trpg/campaign-a/data TTS_CONFIG_FILE=~/trpg/campaign-a/config.jso
 - `bridge.sqlite`：設定・キャラ・声・紐付け・入力元・認証情報・発言の記録
 - `audio/`：一時的なWAV
 - `discord.json`：Discordの設定
-- `runtime.json`：内蔵TTSの起動設定（アプリの場合）
+- `runtime.json`：内蔵TTSの起動設定
 - `voices/`、`reference-voices.json`：Bridgeが登録した参照音声の元WAVと、接続先への登録記録
 
 内蔵・外部どちらでも、Bridgeが登録した参照音声は保存先の `voices/` に入ります。本家speech.cppは参照音声を永続保存しないため、Bridgeが不足分を再登録します。Irodori-TTS-Serverには既存の保存機能があり、登録が残っていれば再登録しません。外部TTSだけにある音声はBridgeには自動保存されません。バックアップは台帳も含め保存先全体をコピーしてください。

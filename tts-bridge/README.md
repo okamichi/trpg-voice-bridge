@@ -1,6 +1,6 @@
 # TRPG Voice Bridge
 
-Bridgeの動きと設定の詳しい仕様です。Node.js **22.13以上** が必要で、`main.mjs` で起動します。依存はWebSocketの `ws` だけで、設定・認証・発言台帳はNode組み込みのSQLiteに保存します。
+Bridgeの動きと設定の詳しい仕様です。Node.js **22.13以上** が必要で、`main.mjs` で起動します。依存はWebSocketの `ws` と、Opusの符号化に使う `opusscript` だけで、設定・認証・発言台帳はNode組み込みのSQLiteに保存します。
 
 - よくある質問と音声トラブル：[FAQ](../docs/faq.md)
 - 構成と、音声担当者・参加者それぞれの操作：[セットアップガイド](../docs/setup-guide.md)
@@ -17,10 +17,13 @@ Playerの「チャット」から、Collectorなしでキャラを作成・選�
 ```sh
 cd tts-bridge
 npm ci
+npm run package:speech
 npm start
 ```
 
-Discord Botを使う場合は、`npm start` の前に `npm --prefix discord ci` も実行します。起動したら、端末に表示される管理用リンクを開きます。管理用リンクは共有しないでください。
+`npm run package:speech` は、内蔵TTSのspeech.cppと起動管理プログラムを `.packaging/speech-runtime/` にビルドします。macOS（Apple Silicon）とWindows（x64）では必要で、ビルドがないか `packaging/speech-lock.json` と合わないと `npm start` は起動しません。ほかの環境ではビルドできないので、このコマンドは飛ばしてください。Bridgeは外部TTSだけで起動します。必要なものは[ソースからのビルドと起動](../docs/build.md#3-speechcppをビルドする)を見てください。
+
+Discord Botを使う場合は、`npm start` の前に `npm --prefix discord ci` も実行します。起動すると管理画面がブラウザで開きます。開かない場合は `npm start -- --no-browser` で起動し、端末に表示される管理用リンクを開きます。管理用リンクは共有しないでください。起動オプション（`--port`、`--data-dir`、`--tts` など）は `npm start -- --port 9000` のように `--` のあとに付けます。
 
 ## キャラの検出
 
@@ -98,19 +101,20 @@ Playerは、通知の順に1件ずつ取得・デコード・再生します。�
 
 ## 環境変数
 
-| 変数                | 既定値                    | 用途                                                                                        |
-| ------------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
-| `TTS_BRIDGE_PORT`   | `8090`                    | 待ち受けポート                                                                              |
-| `TTS_BRIDGE_HOST`   | `127.0.0.1`               | 待ち受けアドレス。別のPCから接続させるときは `0.0.0.0`（[Playerの公開](../docs/online.md)） |
-| `TTS_LOCAL_ORIGIN`  | `http://127.0.0.1:ポート` | 管理画面の正規のOrigin                                                                      |
-| `TTS_PUBLIC_ORIGIN` | なし                      | 参加URL・WebSocketのOrigin・Hostとして外から許可するもの（HTTPかHTTPS、末尾の `/` なし）    |
-| `TTS_CONFIG_FILE`   | `tts-bridge/config.json`  | 初期値のファイル                                                                            |
-| `TTS_DATA_DIR`      | `tts-bridge/data`         | 保存先                                                                                      |
-| `TTS_STARTUP_FILE`  | `tts-bridge/startup.json` | 管理画面「0 起動設定」の保存先                                                              |
+| 変数                     | 既定値                                 | 用途                                                                                        |
+| ------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `TTS_BRIDGE_PORT`        | `8090`                                 | 待ち受けポート                                                                              |
+| `TTS_BRIDGE_HOST`        | `127.0.0.1`                            | 待ち受けアドレス。別のPCから接続させるときは `0.0.0.0`（[Playerの公開](../docs/online.md)） |
+| `TTS_LOCAL_ORIGIN`       | `http://127.0.0.1:ポート`              | 管理画面の正規のOrigin                                                                      |
+| `TTS_PUBLIC_ORIGIN`      | なし                                   | 参加URL・WebSocketのOrigin・Hostとして外から許可するもの（HTTPかHTTPS、末尾の `/` なし）    |
+| `TTS_CONFIG_FILE`        | `tts-bridge/config.json`               | 初期値のファイル                                                                            |
+| `TTS_DATA_DIR`           | `tts-bridge/data`                      | 保存先                                                                                      |
+| `TTS_STARTUP_FILE`       | `tts-bridge/startup.json`              | 管理画面「0 起動設定」の保存先                                                              |
+| `TTS_SPEECH_RUNTIME_DIR` | `tts-bridge/.packaging/speech-runtime` | `npm start` が使うspeech.cppのビルドのフォルダ                                              |
 
 保存先・待ち受けアドレス・ポート・公開Originは、管理画面の「0 起動設定」でも変えられます。値は `startup.json` に保存され、優先順位は「起動オプション > 環境変数 > `startup.json` > 既定値」です。起動オプションや環境変数で指定した項目は、画面では変更できません。`TTS_LOCAL_ORIGIN` を指定するとポートも変更できなくなります。
 
-「保存して再起動」「設定初期化」「Bridgeを再起動」は、プロセスを終了せずにBridgeを閉じて、新しい設定で作り直します。再起動の前に、新しいポートが空いているか、保存先に書き込めるか、アプリでは新しい保存先を別のBridgeが使っていないかを確かめ、だめなら409を返して今のまま動き続けます。新しい設定で起動できなかった場合は、元の設定で起動し直し、`startup.json` は書き換えません。
+「保存して再起動」「設定初期化」「Bridgeを再起動」は、プロセスを終了せずにBridgeを閉じて、新しい設定で作り直します。再起動の前に、新しいポートが空いているか、保存先に書き込めるか、新しい保存先を別のBridgeが使っていないか（外部TTSだけで起動している場合を除く）を確かめ、だめなら409を返して今のまま動き続けます。新しい設定で起動できなかった場合は、元の設定で起動し直し、`startup.json` は書き換えません。
 
 | API                            | 内容                                                                                                                                                                                |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

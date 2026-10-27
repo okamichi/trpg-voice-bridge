@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { speechTarget } from "../src/runtime/speech.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const scratch = join(root, ".packaging");
@@ -55,11 +56,8 @@ for (const [name, pin] of Object.entries(pins)) {
   ]);
 }
 const windows = process.platform === "win32";
-if (!(
-  (windows && process.arch === "x64") ||
-  (process.platform === "darwin" && process.arch === "arm64")
-))
-  throw Error("Unsupported target");
+const target = speechTarget();
+if (!target) throw Error("Unsupported target");
 const suffix = windows ? ".exe" : "";
 const config = [
   "-DCMAKE_BUILD_TYPE=Release",
@@ -251,7 +249,7 @@ writeFileSync(
   JSON.stringify(
     {
       ...pins,
-      target: `${process.platform}-${process.arch}`,
+      target,
       backends: variants.map((variant) => variant.backend),
     },
     null,

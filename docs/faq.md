@@ -74,7 +74,7 @@ Player・Chatterからキャラを作成し、直接チャットできます。�
 
 ### ソースから起動するには？
 
-Node.js 22.13以上を用意し、`tts-bridge/` で `npm ci`、`npm start` を実行します。Discordを使う場合は `npm --prefix discord ci` も必要です。ソースからの起動だけで内蔵speech.cppの実行ファイルが自動でそろうわけではありません。詳細は[ビルドと起動](build.md)を参照してください。
+Node.js 22.13以上を用意し、`tts-bridge/` で `npm ci` を実行します。macOS（Apple Silicon）とWindows（x64）では、続けて `npm run package:speech` でspeech.cppをビルドしてから `npm start` を実行します。ビルドにはCMakeとC++のビルド環境が必要です。ほかの環境では、`npm start` だけで外部TTSに接続して使えます。Discordを使う場合は `npm --prefix discord ci` も必要です。詳細は[ビルドと起動](build.md)を参照してください。
 
 ### macOSやWindowsが起動を止めます。
 
@@ -90,7 +90,7 @@ Vulkanに対応したGPUとドライバーを確認してください。管理�
 
 ### Intel MacやLinuxで使えますか？
 
-現在の配布パッケージはmacOS arm64とWindows x64向けです。ほかの環境ではBridgeをソースから起動し、利用環境に対応した外部TTSを用意する構成を検討してください。配布版と同じ動作保証があるわけではありません。
+現在の配布パッケージはmacOS arm64とWindows x64向けです。ほかの環境ではBridgeをソースから起動し、利用環境に対応した外部TTSを用意する構成を検討してください。その場合、内蔵TTSは使えず、外部TTSだけで起動します。配布版と同じ動作保証があるわけではありません。
 
 ### モデルはどこで選びますか？
 

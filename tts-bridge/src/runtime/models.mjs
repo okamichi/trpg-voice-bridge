@@ -4,18 +4,19 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 
-const unavailable =
-  "同梱のspeechを起動できません。展開したフォルダのruntime/speechを確認してください。";
+// Where a package keeps speech; a source tree names its own build instead.
+export const packagePlace = "展開したフォルダのruntime/speech";
 const failure = (message, status = 500) =>
   Object.assign(Error(message), { status });
 const active = (job) =>
   ["starting", "running", "stopping"].includes(job?.status);
 
 export class SpeechModels {
-  constructor({ dataDir, speech, supervisor }) {
+  constructor({ dataDir, speech, supervisor, place = packagePlace }) {
     this.dataDir = dataDir;
     this.speech = speech;
     this.supervisor = supervisor;
+    this.unavailable = `同梱のspeechを起動できません。${place}を確認してください。`;
     this.pending = new Map();
     this.children = new Set();
     this.dir = "";
@@ -74,7 +75,7 @@ export class SpeechModels {
       });
       child.stderr.resume();
       child.on("error", () => {
-        error = failure(unavailable);
+        error = failure(this.unavailable);
       });
       child.once("close", (code) => {
         clearTimeout(timer);
@@ -237,7 +238,7 @@ export class SpeechModels {
       }, 10000);
     };
     const startupTimer = setTimeout(() => {
-      startupError = unavailable;
+      startupError = this.unavailable;
       this.stopHelper();
     }, 10000);
     const lines = createInterface({ input: helper.stdout });
@@ -258,7 +259,7 @@ export class SpeechModels {
         if (job.status !== "stopping") job.status = "running";
       }
       if (["spawn-error", "lock-error"].includes(event.event)) {
-        startupError = unavailable;
+        startupError = this.unavailable;
         this.stopHelper();
       }
       if (event.event === "exited") {
@@ -270,7 +271,7 @@ export class SpeechModels {
     });
     await new Promise((resolve) => {
       helper.once("error", () => {
-        startupError = unavailable;
+        startupError = this.unavailable;
       });
       helper.once("close", resolve);
     });
