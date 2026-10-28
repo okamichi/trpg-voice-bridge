@@ -3,13 +3,9 @@ import { credits } from "../src/runtime/credits.mjs";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
-import { parseArgs } from "node:util";
-import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
-import { speechLifecycle } from "../src/runtime/speech.mjs";
-import { startBridge } from "../src/runtime/launcher.mjs";
-import { StartupSettings, launchOverrides } from "../src/runtime/startup.mjs";
+import { runBridge } from "../src/runtime/run.mjs";
 import { readAsset } from "../src/runtime/assets.mjs";
 import { createExtension } from "../discord/extension.mjs";
 import { loadDependencies } from "../discord/bot.mjs";
@@ -48,134 +44,32 @@ async function selfTest() {
   );
 }
 
-function openBrowser(url) {
-  return new Promise((resolve, reject) => {
-    // No shell interpolation: the URL contains a short-lived admin credential.
-    const command = process.platform === "darwin" ? "open" : "rundll32.exe";
-    const args =
-      process.platform === "darwin"
-        ? [url]
-        : ["url.dll,FileProtocolHandler", url];
-    const child = spawn(command, args, { stdio: "ignore", windowsHide: true });
-    child.once("error", reject);
-    child.once("exit", (code) =>
-      code === 0 ? resolve() : reject(Error("browser")),
-    );
-  });
-}
-
 async function main() {
-  const { values } = parseArgs({
-    options: {
-      help: { type: "boolean" },
-      version: { type: "boolean" },
-      "no-browser": { type: "boolean" },
-      "self-test": { type: "boolean" },
-      "data-dir": { type: "string" },
-      port: { type: "string" },
-      tts: { type: "string" },
-      model: { type: "string" },
-      "tts-port": { type: "string" },
-      "tts-backend": { type: "string" },
-    },
-  });
-  if (values.help) {
-    console.log(
-      "TRPG Voice Bridge\n--help --version --no-browser --data-dir <path> --port <1-65535> --self-test\n--tts <external|bundled> --model <absolute.gguf> --tts-port <1-65535>\n--tts-backend <vulkan|cpu> (Windows)",
-    );
-    return;
-  }
-  if (values.version) {
-    console.log(JSON.parse(readAsset("build-info.json")).version);
-    return;
-  }
-  if (values["self-test"]) {
-    await selfTest();
-    return;
-  }
-  const root =
-    process.platform === "darwin"
-      ? join(homedir(), "Library/Application Support/TRPG-Voice-Bridge")
-      : join(
-          process.env.LOCALAPPDATA ?? join(homedir(), "AppData/Local"),
-          "TRPG-Voice-Bridge",
-        );
-  const startup = new StartupSettings({
-    file: resolve(process.env.TTS_STARTUP_FILE ?? join(root, "startup.json")),
-    defaults: {
-      dataDir: join(root, "data"),
-      host: "127.0.0.1",
-      port: 8090,
-      publicOrigin: "",
-    },
-    ...launchOverrides(process.env, {
-      dataDir: values["data-dir"],
-      port: values.port,
-    }),
-  });
-  const loadDefaults = process.env.TTS_CONFIG_FILE
-    ? () => JSON.parse(readFileSync(resolve(process.env.TTS_CONFIG_FILE)))
-    : () => JSON.parse(readAsset("config.json"));
-  const bridgeCredits = credits(
-    readAsset("credits/TRPG-Voice-Bridge-LICENSE").toString("utf8"),
-    readAsset("credits/speech.cpp-LICENSE").toString("utf8"),
-    JSON.parse(readAsset("build-info.json")).speech.speech,
-  );
-  // Launch options for the bundled TTS apply to every start of this process.
-  const ttsOverrides = {
-    ...(values.tts !== undefined ? { mode: values.tts } : {}),
-    ...(values.model !== undefined ? { model: values.model } : {}),
-    ...(values["tts-port"] !== undefined
-      ? { ttsPort: Number(values["tts-port"]) }
-      : {}),
-    ...(values["tts-backend"] !== undefined
-      ? { backend: values["tts-backend"] }
-      : {}),
-  };
-  const speech = speechLifecycle({
-    runtimeDir: join(dirname(process.execPath), "runtime/speech"),
-    overrides: ttsOverrides,
-  });
-  await startBridge({
-    startup,
-    loadDefaults,
-    prepare: speech.prepare,
-    boot: (active, prepared) =>
-      speech.boot(active, prepared, (runtime) => ({
-        credits: bridgeCredits,
-        providerOptions: {
-          resolveProvider: (saved) => runtime.provider(saved),
-          fetchImpl: runtime.fetch,
-        },
+  await runBridge({
+    version: () => JSON.parse(readAsset("build-info.json")).version,
+    selfTest,
+    layout: () => {
+      const root =
+        process.platform === "darwin"
+          ? join(homedir(), "Library/Application Support/TRPG-Voice-Bridge")
+          : join(
+              process.env.LOCALAPPDATA ?? join(homedir(), "AppData/Local"),
+              "TRPG-Voice-Bridge",
+            );
+      return {
+        startupFile: join(root, "startup.json"),
+        dataDir: join(root, "data"),
+        loadDefaults: process.env.TTS_CONFIG_FILE
+          ? () => JSON.parse(readFileSync(resolve(process.env.TTS_CONFIG_FILE)))
+          : () => JSON.parse(readAsset("config.json")),
+        credits: credits(
+          readAsset("credits/TRPG-Voice-Bridge-LICENSE").toString("utf8"),
+          readAsset("credits/speech.cpp-LICENSE").toString("utf8"),
+          JSON.parse(readAsset("build-info.json")).speech.speech,
+        ),
         extensions: [createExtension],
-        localOrigin:
-          process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${active.port}`,
-      })),
-    onListening: async (app, { restarted }) => {
-      const runtime = speech.runtime;
-      void runtime
-        .start()
-        .catch(() => runtime.fail("内蔵TTSを開始できませんでした"));
-      console.log(`Bridge ready: http://127.0.0.1:${startup.active.port}/`);
-      // After a restart the admin page moves to the new address itself.
-      let manual = values["no-browser"] || restarted;
-      if (!manual) {
-        try {
-          await openBrowser(app.adminUrl());
-        } catch {
-          manual = true;
-        }
-      }
-      if (manual) {
-        if (process.stdout.isTTY)
-          console.log(
-            `管理用リンク（共有しないでください）: ${app.adminUrl()}`,
-          );
-        else if (!restarted)
-          console.log(
-            "管理用リンクを表示するには端末から --no-browser で起動してください。",
-          );
-      }
+        speechDir: join(dirname(process.execPath), "runtime/speech"),
+      };
     },
   });
 }

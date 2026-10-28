@@ -12,13 +12,31 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
-import { SpeechModels } from "./models.mjs";
+import { SpeechModels, packagePlace } from "./models.mjs";
 import { RuntimeSettings, exposed } from "./settings.mjs";
 import { ReferenceVoices } from "../reference-voices.mjs";
 
 // Windows' STATUS_DLL_NOT_FOUND. The Vulkan build cannot start without the
 // Vulkan loader, vulkan-1.dll, which GPU drivers install.
 const DLL_NOT_FOUND = 0xc0000135;
+
+// The targets package:speech builds for, as "platform-arch"; null elsewhere.
+export function speechTarget(platform = process.platform, arch = process.arch) {
+  return (platform === "darwin" && arch === "arm64") ||
+    (platform === "win32" && arch === "x64")
+    ? `${platform}-${arch}`
+    : null;
+}
+
+// Whether a package:speech build (its build.json) is for this target and the
+// pinned speech.cpp and ggml sources (speech-lock.json).
+export function speechBuildMatches(info, pins, target) {
+  return (
+    info?.target === target &&
+    info.speech?.commit === pins.speech.commit &&
+    info.ggml?.commit === pins.ggml.commit
+  );
+}
 
 export function stopMessage(code, backend) {
   if (backend === "vulkan" && code === DLL_NOT_FOUND)
@@ -36,8 +54,10 @@ export class SpeechRuntime {
     backends,
     startupTimeout = 180000,
     speechProgram,
+    place = packagePlace,
   }) {
     this.dataDir = dataDir;
+    this.place = place;
     this.settings = new RuntimeSettings(dataDir, overrides, backends);
     this.runtimeDir = runtimeDir;
     const suffix = process.platform === "win32" ? ".exe" : "";
@@ -45,6 +65,7 @@ export class SpeechRuntime {
       dataDir,
       speech: speechProgram ?? [join(runtimeDir, `speech${suffix}`)],
       supervisor: join(runtimeDir, `bridge-supervisor${suffix}`),
+      place,
     });
     this.startupTimeout = startupTimeout;
     this.status =
@@ -135,7 +156,7 @@ export class SpeechRuntime {
       this.helper.once("error", () =>
         reject(
           exposed(
-            "同梱の起動管理プログラムを開始できません。展開したフォルダのruntime/speechを確認してください。",
+            `同梱の起動管理プログラムを開始できません。${this.place}を確認してください。`,
           ),
         ),
       );

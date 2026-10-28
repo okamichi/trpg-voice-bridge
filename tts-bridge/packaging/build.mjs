@@ -21,6 +21,7 @@ import { assertPackagePrivacy, snapshotUpstreamBinaries } from "./privacy.mjs";
 import { supplementLicenses } from "./licenses.mjs";
 import { checkProjectVersion } from "./version.mjs";
 import { buildChatter } from "../chatter/build.mjs";
+import { speechBuildMatches, speechTarget } from "../src/runtime/speech.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const required = readFileSync(
@@ -29,14 +30,11 @@ const required = readFileSync(
 ).trim();
 if (process.versions.node !== required)
   throw Error(`Build with Node.js ${required}, got ${process.version}`);
-if (!(
-  (process.platform === "darwin" && process.arch === "arm64") ||
-  (process.platform === "win32" && process.arch === "x64")
-))
+const target = speechTarget();
+if (!target)
   throw Error(
     "Supported targets: darwin-arm64 / win32-x64 (native builds only)",
   );
-const target = `${process.platform}-${process.arch}`;
 const version = checkProjectVersion();
 const scratch = join(root, ".packaging");
 mkdirSync(scratch, { recursive: true });
@@ -72,11 +70,7 @@ const speechInfo = JSON.parse(readFileSync(join(speechDir, "build.json")));
 const speechPins = JSON.parse(
   readFileSync(join(root, "packaging/speech-lock.json")),
 );
-if (
-  speechInfo.target !== target ||
-  speechInfo.speech.commit !== speechPins.speech.commit ||
-  speechInfo.ggml.commit !== speechPins.ggml.commit
-)
+if (!speechBuildMatches(speechInfo, speechPins, target))
   throw Error("Run package:speech for this target and pinned source first");
 cpSync(speechDir, join(stage, "runtime/speech"), { recursive: true });
 const bundle = join(work, "bridge.cjs");

@@ -4,13 +4,15 @@
 
 ## 1. 進め方を選ぶ
 
-|            | A. `npm start` で起動する                                       | B. 実行ファイルを作って起動する                                      |
-| ---------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 音声生成   | 別に起動した外部TTS（Irodori-TTS-Serverかspeech.cpp）に接続する | speech.cppを同梱する。管理画面で内蔵TTSと外部TTSを切り替えられる     |
-| 必要なもの | Node.js 22.13以上                                               | Node.js 24.22.1、CMake、C++のビルド環境（macOS arm64 / Windows x64） |
-| 読む節     | 2 → 4 → 6（外部TTSにspeech.cppを使う場合は3も）                 | 2 → 3 → 5 → 6                                                        |
+|            | A. `npm start` で起動する                                                                         | B. 実行ファイルを作って起動する                                      |
+| ---------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 音声生成   | 内蔵speech.cppか、別に起動した外部TTS（Irodori-TTS-Serverかspeech.cpp）。管理画面で切り替えられる | Aと同じ                                                              |
+| 必要なもの | Node.js 22.13以上、CMake、C++のビルド環境（macOS arm64 / Windows x64）                            | Node.js 24.22.1、CMake、C++のビルド環境（macOS arm64 / Windows x64） |
+| 読む節     | 2 → 3 → 4 → 6                                                                                     | 2 → 3 → 5 → 6                                                        |
 
-`npm start` で開いた管理画面には、内蔵TTSの設定（「TTSの起動設定」）は表示されません。内蔵TTSを使う場合はBを選んでください。
+どちらも、管理画面でできることは同じです。Bは、ZIPにまとめて別のPCへ持っていけます。
+
+macOS（Apple Silicon）とWindows（x64）以外では、speech.cppをビルドできないので、Bは作れません。Aで起動し、外部TTSに接続して使います（2 → 4 → 6）。
 
 ## 2. ソースを用意する
 
@@ -39,7 +41,7 @@ Bでは、Node.jsについて次の2点も必要です。
 
 ## 3. speech.cppをビルドする
 
-Bと、Aでspeech.cppを外部TTSに使う場合に必要です。ビルドできるのは、次の2つの環境で、その環境向けのものだけです。
+AとBのどちらでも必要です。ビルドできるのは、次の2つの環境で、その環境向けのものだけです。ほかの環境では、この節は飛ばしてください。
 
 | OS                     | 必要なもの                                                                                          | できるspeech.cpp |
 | ---------------------- | --------------------------------------------------------------------------------------------------- | ---------------- |
@@ -77,67 +79,21 @@ npm run package:speech
 
 `bridge-supervisor` は、内蔵TTSの起動と終了を管理し、同じ保存先でBridgeが二重に起動しないようにするプログラムです。
 
-## 4. A: 外部TTSに接続して起動する
+Aの `npm start` は、このフォルダのspeech.cppを使います。別のフォルダにあるビルドを使う場合は、環境変数 `TTS_SPEECH_RUNTIME_DIR` にそのフォルダを指定します。どちらの場合も、ソースの `packaging/speech-lock.json` と同じspeech.cppとggmlからビルドしたものでないと、`npm start` は起動しません。
 
-外部TTSは、Bridgeとは別に起動するTTSです。同じPCで動かしてもかまいません。次のどちらかを、Bridgeとは別のターミナルで起動してください。
+## 4. A: `npm start` で起動する
 
-### Irodori-TTS-Serverを使う
-
-```sh
-git clone https://github.com/Aratako/Irodori-TTS-Server.git
-cd Irodori-TTS-Server
-uv sync --extra cu128
-cp .env.example .env
-uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8088
-```
-
-- `cu128` はNVIDIA CUDAの例です。LinuxのAMD ROCmなら `rocm`、CPUなら `cpu` にしてください。指定するのはどれか一つです。
-- `.env` でのモデルの設定や、環境ごとの準備は [Irodori-TTS-ServerのREADME](https://github.com/Aratako/Irodori-TTS-Server#installation) を見てください。初回はモデルの取得と読み込みに時間がかかります。
-- Apple SiliconでMLXを使う場合は、[MLX対応フォークのmlxブランチ](https://github.com/okamichi/Irodori-TTS-Server/tree/mlx)の手順に従ってください。
-
-### speech.cppを使う
-
-3節でビルドしたspeech.cppを、そのまま外部TTSとして使えます。実行ファイルを作る必要はありません。`tts-bridge/` で、まずモデルをダウンロードします。
-
-```sh
-# macOS
-./.packaging/speech-runtime/speech pull irodori-tts:q8_0
-```
-
-```powershell
-# Windows
-.\.packaging\speech-runtime\speech.exe pull irodori-tts:q8_0
-```
-
-最後に表示されるGGUFの絶対パスを、次の `<GGUFの絶対パス>` に入れて起動します。
-
-```sh
-# macOS
-./.packaging/speech-runtime/speech serve "<GGUFの絶対パス>" --host 127.0.0.1 --port 8088
-```
-
-```powershell
-# Windows（CPU版）
-.\.packaging\speech-runtime\speech.exe serve '<GGUFの絶対パス>' --host 127.0.0.1 --port 8088
-```
-
-- WindowsでVulkan版を使う場合は、`speech-vulkan.exe` に替えて `--device gpu` を付けてください。
-- 管理画面の「TTS接続先」で「speech.cpp（本家）」を選んでください。参照音声はBridgeの保存先の `voices/` と `reference-voices.json` で管理し、TTS再起動後は不足分を再登録します。
-- 別PCの本家を利用する場合は、両端が同じポートのSSH転送を使います（例: `ssh -N -L 8088:127.0.0.1:8088 user@tts-host`）。
-- macOS arm64とWindows x64以外では、[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp) の手順でビルドしてください。
-
-### Bridgeを起動する
-
-TTSを動かしたまま、別のターミナルの `tts-bridge/` で起動します。
+`tts-bridge/` で起動します。
 
 ```sh
 npm start
 ```
 
-1. 端末に表示される**管理用リンク**を開きます。このリンクは共有しないでください。出力をファイルへリダイレクトすると、リンクは表示されません。
-2. 「1 TTSの準備」の「接続テスト」を押し、「接続状態」のTTSサーバーが「接続済み」になることを確かめます。
+管理画面がブラウザで開きます。開かない場合は `npm start -- --no-browser` で起動し直し、端末に表示される**管理用リンク**を開いてください。このリンクは共有しないでください。出力をファイルへリダイレクトすると、リンクは表示されません。
 
-接続先の既定は `http://127.0.0.1:8088` です。「TTS接続先」で種類を選び、別のアドレスやポートで起動した場合はURLも変えて「接続先を保存」を押してください。外部TTSの起動・停止・モデルの変更は、そのTTSを起動した端末で行います。
+- macOS（Apple Silicon）とWindows（x64）では、3節のビルドがないと「speech.cppのビルドがありません」と表示して起動しません。
+- ほかの環境では「このOSでは内蔵TTSを使えません。外部TTSだけで起動します。」と表示し、外部TTSだけで起動します。
+- 起動オプションは、`npm start -- --port 9000` のように `--` のあとに付けます。使えるオプションは7節を見てください。
 
 続けて6節へ進んでください。
 
@@ -178,7 +134,13 @@ npm run package:smoke
 
 管理画面がブラウザで開きます。開かない場合は `--no-browser` を付けて起動し直し、表示された管理用リンクを開いてください。
 
-### 内蔵TTSを設定する
+続けて6節へ進んでください。
+
+## 6. 管理画面で卓の準備をする
+
+ここからはAとBで同じです。管理画面の手順は、設定する順に番号が付いています。
+
+### 内蔵TTSを使う場合
 
 最初は外部TTSに接続する設定（起動方式「外部サーバー」）で起動します。内蔵TTSに切り替えるには、次のようにします。
 
@@ -188,13 +150,64 @@ npm run package:smoke
 4. 再起動して管理画面が開き直されたら、「1 TTSの準備」が「準備完了」になるのを待ちます。
 
 - モデルの保存先は「保存先」で変えられます。Bridgeのデータの保存先とは別です。
-- 内蔵TTSのポートの既定は **18088** です。Bridgeの8090や、4節の例の8088とは別です。
+- 内蔵TTSのポートの既定は **18088** です。Bridgeの8090や、外部TTSの例の8088とは別です。
 - Windowsのspeech.cppはAVX2に対応したCPUが必要です。Vulkan版には、Vulkanに対応したGPUとドライバーも必要です。Vulkan版でエラーになる場合は、CPU版にして保存し、「Bridgeを再起動」を押してください。CPU版は生成に時間がかかることがあります。
 - 外部TTSに戻すには、起動方式を「外部サーバー」にして保存し、「Bridgeを再起動」を押します。「TTS接続先」の設定は残っています。
 
-## 6. 管理画面で卓の準備をする
+### 外部TTSを使う場合
 
-ここからはAとBで同じです。管理画面の手順は、設定する順に番号が付いています。
+外部TTSは、Bridgeとは別に起動するTTSです。同じPCで動かしてもかまいません。次のどちらかを、Bridgeとは別のターミナルで起動してください。
+
+#### Irodori-TTS-Serverを使う
+
+```sh
+git clone https://github.com/Aratako/Irodori-TTS-Server.git
+cd Irodori-TTS-Server
+uv sync --extra cu128
+cp .env.example .env
+uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8088
+```
+
+- `cu128` はNVIDIA CUDAの例です。LinuxのAMD ROCmなら `rocm`、CPUなら `cpu` にしてください。指定するのはどれか一つです。
+- `.env` でのモデルの設定や、環境ごとの準備は [Irodori-TTS-ServerのREADME](https://github.com/Aratako/Irodori-TTS-Server#installation) を見てください。初回はモデルの取得と読み込みに時間がかかります。
+- Apple SiliconでMLXを使う場合は、[MLX対応フォークのmlxブランチ](https://github.com/okamichi/Irodori-TTS-Server/tree/mlx)の手順に従ってください。
+
+#### speech.cppを使う
+
+3節でビルドしたspeech.cppを、別に起動して外部TTSとしても使えます。`tts-bridge/` で、まずモデルをダウンロードします。
+
+```sh
+# macOS
+./.packaging/speech-runtime/speech pull irodori-tts:q8_0
+```
+
+```powershell
+# Windows
+.\.packaging\speech-runtime\speech.exe pull irodori-tts:q8_0
+```
+
+最後に表示されるGGUFの絶対パスを、次の `<GGUFの絶対パス>` に入れて起動します。
+
+```sh
+# macOS
+./.packaging/speech-runtime/speech serve "<GGUFの絶対パス>" --host 127.0.0.1 --port 8088
+```
+
+```powershell
+# Windows（CPU版）
+.\.packaging\speech-runtime\speech.exe serve '<GGUFの絶対パス>' --host 127.0.0.1 --port 8088
+```
+
+- WindowsでVulkan版を使う場合は、`speech-vulkan.exe` に替えて `--device gpu` を付けてください。
+- 管理画面の「TTS接続先」で「speech.cpp（本家）」を選んでください。参照音声はBridgeの保存先の `voices/` と `reference-voices.json` で管理し、TTS再起動後は不足分を再登録します。
+- 別PCの本家を利用する場合は、両端が同じポートのSSH転送を使います（例: `ssh -N -L 8088:127.0.0.1:8088 user@tts-host`）。
+- macOS arm64とWindows x64以外では、[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp) の手順でビルドしてください。
+
+#### 接続を確かめる
+
+TTSを動かしたまま、管理画面で「1 TTSの準備」の「接続テスト」を押し、「接続状態」のTTSサーバーが「接続済み」になることを確かめます。
+
+接続先の既定は `http://127.0.0.1:8088` です。「TTS接続先」で種類を選び、別のアドレスやポートで起動した場合はURLも変えて「接続先を保存」を押してください。外部TTSの起動・停止・モデルの変更は、そのTTSを起動した端末で行います。
 
 ### Discord Botを使う場合
 
@@ -244,14 +257,13 @@ Discordだけで音声を配り、音声担当者が全員のキャラの声を�
 - 「6 終了」の「セッション終了」は、読み上げを止め、参加者とCollectorの接続を閉じます。Bridgeは動いたままです。
 - 「Bridgeを終了」か、起動した端末での `Ctrl+C` でBridgeを終了します。内蔵TTSも一緒に止まります。外部TTSは止まらないので、別に終了してください。
 
-|                   | A（`npm start`）                                    | B（実行ファイル）                                                                                                 |
-| ----------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 保存先の既定      | `tts-bridge/data/`                                  | macOS：`~/Library/Application Support/TRPG-Voice-Bridge/data/`、Windows：`%LOCALAPPDATA%\TRPG-Voice-Bridge\data\` |
-| 保存先の指定      | 管理画面の「0 起動設定」か、環境変数 `TTS_DATA_DIR` | 管理画面の「0 起動設定」か、`--data-dir` か `TTS_DATA_DIR`                                                        |
-| 内蔵TTSの設定     | なし                                                | 保存先の `runtime.json`                                                                                           |
-| 内蔵TTSの参照音声 | なし                                                | 保存先の `voices/`                                                                                                |
+|              | A（`npm start`）   | B（実行ファイル）                                                                                                 |
+| ------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| 保存先の既定 | `tts-bridge/data/` | macOS：`~/Library/Application Support/TRPG-Voice-Bridge/data/`、Windows：`%LOCALAPPDATA%\TRPG-Voice-Bridge\data\` |
 
-どちらも、設定・キャラ・声の割り当ては保存先の `bridge.sqlite` に、Discordの設定は `discord.json` に保存されます。
+保存先は、管理画面の「0 起動設定」か、`--data-dir` か `TTS_DATA_DIR` で指定できます。
+
+どちらも、設定・キャラ・声の割り当ては保存先の `bridge.sqlite` に、Discordの設定は `discord.json` に、内蔵TTSの設定は `runtime.json` に、内蔵TTSの参照音声は `voices/` に保存されます。
 
 バックアップや移行では、Bridgeを終了してから保存先のフォルダ全体をコピーしてください。モデル（GGUF）は保存先に入らないので、別に保管し、移した先で指定し直します。外部TTSの参照音声は、外部TTSの側でバックアップしてください。
 
@@ -274,7 +286,7 @@ $env:TTS_DATA_DIR = '.\data-table-a'
 npm start
 ```
 
-Bでは、起動コマンドの `--data-dir` を卓ごとに変えます。同時に複数のBridgeを動かす場合は、保存先に加えて、Bridgeのポート、内蔵TTSのポート、Collectorの接続先も分けてください。
+起動オプションで `npm start -- --data-dir ./data-table-a` のように指定することもできます。Bでは、起動コマンドの `--data-dir` を卓ごとに変えます。同時に複数のBridgeを動かす場合は、保存先に加えて、Bridgeのポート、内蔵TTSのポート、Collectorの接続先も分けてください。
 
 ### 待ち受けや公開先を変える
 
@@ -288,17 +300,18 @@ Bでは、起動コマンドの `--data-dir` を卓ごとに変えます。同�
 
 起動するときに環境変数や起動オプションで指定することもできます。指定した項目は「0 起動設定」の値より優先され、「0 起動設定」では変更できなくなります。
 
-| 環境変数            | 既定値                                            | 用途                                                                                       |
-| ------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `TTS_BRIDGE_HOST`   | `127.0.0.1`                                       | Bridgeの待ち受けアドレス                                                                   |
-| `TTS_BRIDGE_PORT`   | `8090`                                            | Bridgeの待ち受けポート                                                                     |
-| `TTS_LOCAL_ORIGIN`  | `http://127.0.0.1:待ち受けポート`                 | ローカルの管理画面のOrigin。指定すると「0 起動設定」でポートを変更できない                 |
-| `TTS_PUBLIC_ORIGIN` | なし                                              | 参加者向けに公開するOrigin。例：`https://voice.example.com`（パスと末尾の `/` は付けない） |
-| `TTS_CONFIG_FILE`   | Aは `tts-bridge/config.json`、Bはビルド時の初期値 | 初期設定のファイル。保存済みの設定は上書きしない                                           |
-| `TTS_DATA_DIR`      | 上の表の保存先                                    | 設定・認証・キャラ・声の割り当てなどの保存先                                               |
-| `TTS_STARTUP_FILE`  | 上の表の `startup.json`                           | 「0 起動設定」の保存先                                                                     |
+| 環境変数                 | 既定値                                            | 用途                                                                                       |
+| ------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `TTS_BRIDGE_HOST`        | `127.0.0.1`                                       | Bridgeの待ち受けアドレス                                                                   |
+| `TTS_BRIDGE_PORT`        | `8090`                                            | Bridgeの待ち受けポート                                                                     |
+| `TTS_LOCAL_ORIGIN`       | `http://127.0.0.1:待ち受けポート`                 | ローカルの管理画面のOrigin。指定すると「0 起動設定」でポートを変更できない                 |
+| `TTS_PUBLIC_ORIGIN`      | なし                                              | 参加者向けに公開するOrigin。例：`https://voice.example.com`（パスと末尾の `/` は付けない） |
+| `TTS_CONFIG_FILE`        | Aは `tts-bridge/config.json`、Bはビルド時の初期値 | 初期設定のファイル。保存済みの設定は上書きしない                                           |
+| `TTS_DATA_DIR`           | 上の表の保存先                                    | 設定・認証・キャラ・声の割り当てなどの保存先                                               |
+| `TTS_STARTUP_FILE`       | 上の表の `startup.json`                           | 「0 起動設定」の保存先                                                                     |
+| `TTS_SPEECH_RUNTIME_DIR` | `tts-bridge/.packaging/speech-runtime/`           | Aの `npm start` が使うspeech.cppのビルドのフォルダ（3節）。Bでは使わない                   |
 
-Bでは、`--port` と `--data-dir` が環境変数より優先されます。`--tts external` / `--tts bundled`、`--model`、`--tts-port`、Windowsの `--tts-backend vulkan` / `--tts-backend cpu` で、その回の起動だけ設定を変えられます。これらは `runtime.json` の保存値を書き換えません。
+`--port` と `--data-dir` は、環境変数より優先されます。`--tts external` / `--tts bundled`、`--model`、`--tts-port`、Windowsの `--tts-backend vulkan` / `--tts-backend cpu` で、その回の起動だけ設定を変えられます。これらは `runtime.json` の保存値を書き換えません。Aでは `npm start -- --tts bundled` のように、`--` のあとに付けます。
 
 HTTPSのリバースプロキシを用意してある場合は、「0 起動設定」の公開OriginにそのHTTPSのURL（例：`https://voice.example.com`）を指定します。同じPCのプロキシから転送するなら、待ち受けアドレスは `127.0.0.1` のままで使えます。環境変数で指定する場合は、次のように起動します。
 
@@ -321,6 +334,8 @@ Bでも、同じ環境変数を設定してから起動します。公開のし�
 
 Bridgeを終了してから新しいソースに替え、`tts-bridge/` で `npm ci` を実行します。AでDiscordを使う場合は `npm --prefix discord ci` も実行します。
 
+ソースの `packaging/speech-lock.json` が変わった場合は、`npm run package:speech` でspeech.cppをビルドし直してください。Aでは、ビルドし直すまで `npm start` は起動しません。
+
 Bで実行ファイルを作り直すときは、`package:speech` → `package:build` → `package:smoke` の順に実行してください。ZIPを展開し直したら、使用しているCollector・Chatterも新しいフォルダから読み込み直します。今までのデータを使う場合は、同じ保存先を指定してください。
 
 AでChatterのソースや共通Playerを更新したら `npm run chatter:build` を再実行してください。バージョンを変更するときは `package.json` を更新して `npm run version` を実行すると、Collector・ChatterのManifestとlockfileも同期します。`npm run version:check` はずれを検出します。
@@ -331,20 +346,20 @@ AでChatterのソースや共通Playerを更新したら `npm run chatter:build`
 
 ### よくある問題
 
-| 症状                                          | 確かめること                                                                                                                          |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `Build with Node.js ...`                      | `node --version` が `packaging/node-version` と同じか。Node.jsを切り替えたあとに `npm ci` をやり直したか                              |
-| `build.json` がない、`Run package:speech ...` | `npm run package:speech` が最後まで終わったか。今のOSと `speech-lock.json` に合ったビルドか                                           |
-| WindowsでVulkan SDKやClangCLが見つからない    | SDK、Visual StudioのC++ビルド環境とClangCL、`VULKAN_SDK` と `PATH` の設定                                                             |
-| Node.jsの `LICENSE` が見つからない            | nodejs.orgの公式配布物のNode.jsを使っているか                                                                                         |
-| `npm start` に「TTSの起動設定」がない         | 内蔵TTSはBの実行ファイルで使う（1節）                                                                                                 |
-| TTSが「未接続・準備中」                       | 外部TTSが起動しているか、接続先のURLとポート。内蔵TTSならモデルの読み込みが終わったか                                                 |
-| 内蔵TTSが「起動失敗」                         | GGUFの絶対パスとファイルの有無、空きメモリ、ポートの重複、WindowsのGPUドライバー。必要ならCPU版にして保存し、「Bridgeを再起動」を押す |
-| 設定を保存しても変わらない                    | 「次回起動の設定を保存」は再起動で反映される。表示される「Bridgeを再起動」を押す                                                      |
-| Bridgeが起動しない                            | 8090の重複、保存先へのアクセス権。Bでは `runtime/` の配置と、同じ保存先での二重起動                                                   |
-| Collectorが接続できない                       | 拡張の「Bridge接続先」、VTTへの入室、初回の承認のあとに接続し直したか                                                                 |
-| 接続済みなのに音声が出ない                    | 読み上げ開始、キャラの声の保存、「このキャラを読み上げる」、Playerの音声の有効化、またはDiscordの接続先                               |
-| 別のPCで参加URLを開けない                     | `127.0.0.1` のURLを渡していないか。Playerの公開の手順（待ち受けアドレスと公開Origin）                                                 |
+| 症状                                                                 | 確かめること                                                                                                                          |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `Build with Node.js ...`                                             | `node --version` が `packaging/node-version` と同じか。Node.jsを切り替えたあとに `npm ci` をやり直したか                              |
+| `build.json` がない、`Run package:speech ...`                        | `npm run package:speech` が最後まで終わったか。今のOSと `speech-lock.json` に合ったビルドか                                           |
+| WindowsでVulkan SDKやClangCLが見つからない                           | SDK、Visual StudioのC++ビルド環境とClangCL、`VULKAN_SDK` と `PATH` の設定                                                             |
+| Node.jsの `LICENSE` が見つからない                                   | nodejs.orgの公式配布物のNode.jsを使っているか                                                                                         |
+| `npm start` が「speech.cppのビルドがありません」などと表示して止まる | `npm run package:speech` が最後まで終わったか（3節）。ソースを更新したあとにビルドし直したか                                          |
+| TTSが「未接続・準備中」                                              | 外部TTSが起動しているか、接続先のURLとポート。内蔵TTSならモデルの読み込みが終わったか                                                 |
+| 内蔵TTSが「起動失敗」                                                | GGUFの絶対パスとファイルの有無、空きメモリ、ポートの重複、WindowsのGPUドライバー。必要ならCPU版にして保存し、「Bridgeを再起動」を押す |
+| 設定を保存しても変わらない                                           | 「次回起動の設定を保存」は再起動で反映される。表示される「Bridgeを再起動」を押す                                                      |
+| Bridgeが起動しない                                                   | 8090の重複、保存先へのアクセス権、同じ保存先での二重起動。Bでは `runtime/` の配置                                                     |
+| Collectorが接続できない                                              | 拡張の「Bridge接続先」、VTTへの入室、初回の承認のあとに接続し直したか                                                                 |
+| 接続済みなのに音声が出ない                                           | 読み上げ開始、キャラの声の保存、「このキャラを読み上げる」、Playerの音声の有効化、またはDiscordの接続先                               |
+| 別のPCで参加URLを開けない                                            | `127.0.0.1` のURLを渡していないか。Playerの公開の手順（待ち受けアドレスと公開Origin）                                                 |
 
 管理画面に「音声生成の確認が必要です」が出た場合は、TTSの処理が終わったことを確かめてから「Irodori側の処理終了を確認して復帰」を押してください。
 

@@ -1,12 +1,13 @@
 import { credits } from "./src/runtime/credits.mjs";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { startBridge } from "./src/runtime/launcher.mjs";
-import { StartupSettings, launchOverrides } from "./src/runtime/startup.mjs";
+import { runBridge } from "./src/runtime/run.mjs";
+import { exposed } from "./src/runtime/settings.mjs";
+import { speechBuildMatches, speechTarget } from "./src/runtime/speech.mjs";
+const local = (path) => fileURLToPath(new URL(path, import.meta.url));
 const configPath = resolve(
-  process.env.TTS_CONFIG_FILE ??
-    fileURLToPath(new URL("./config.json", import.meta.url)),
+  process.env.TTS_CONFIG_FILE ?? local("./config.json"),
 );
 const loadDefaults = () => JSON.parse(readFileSync(configPath));
 const extensions = [];
@@ -18,37 +19,58 @@ try {
   if (error.code !== "ERR_MODULE_NOT_FOUND" || error.url !== extensionUrl.href)
     console.error("拡張を読み込めませんでした。Bridgeのみ起動します。");
 }
-const bridgeCredits = credits(
-  readFileSync(new URL("../LICENSE", import.meta.url), "utf8"),
-);
+const bridgeLicense = readFileSync(local("../LICENSE"), "utf8");
+
+// The speech.cpp build from npm run package:speech, or the one
+// TTS_SPEECH_RUNTIME_DIR names. Other targets have no build: external TTS only.
+function speechBuild() {
+  const target = speechTarget();
+  if (!target) {
+    console.log("このOSでは内蔵TTSを使えません。外部TTSだけで起動します。");
+    return null;
+  }
+  const dir = resolve(
+    process.env.TTS_SPEECH_RUNTIME_DIR ?? local("./.packaging/speech-runtime/"),
+  );
+  let info;
+  try {
+    info = JSON.parse(readFileSync(join(dir, "build.json"), "utf8"));
+  } catch {
+    throw exposed(
+      `speech.cppのビルドがありません（${dir}）。tts-bridge/ で npm run package:speech を実行してから起動してください。`,
+    );
+  }
+  const pins = JSON.parse(
+    readFileSync(local("./packaging/speech-lock.json"), "utf8"),
+  );
+  if (!speechBuildMatches(info, pins, target))
+    throw exposed(
+      `speech.cppのビルド（${dir}）が packaging/speech-lock.json と合いません。tts-bridge/ で npm run package:speech を実行し直してください。`,
+    );
+  return { dir, info };
+}
+
 try {
-  const startup = new StartupSettings({
-    file: resolve(
-      process.env.TTS_STARTUP_FILE ??
-        fileURLToPath(new URL("./startup.json", import.meta.url)),
-    ),
-    defaults: {
-      dataDir: resolve(fileURLToPath(new URL("./data/", import.meta.url))),
-      host: "127.0.0.1",
-      port: 8090,
-      publicOrigin: "",
-    },
-    ...launchOverrides(),
-  });
-  await startBridge({
-    startup,
-    loadDefaults,
-    boot: (active) => ({
-      credits: bridgeCredits,
-      extensions,
-      localOrigin:
-        process.env.TTS_LOCAL_ORIGIN ?? `http://127.0.0.1:${active.port}`,
-    }),
-    onListening: (app, { restarted }) => {
-      if (process.stdout.isTTY)
-        console.log(`管理用リンク（共有しないでください）: ${app.adminUrl()}`);
-      else if (!restarted)
-        console.log("管理用リンクを表示するには端末から起動してください。");
+  await runBridge({
+    version: () => JSON.parse(readFileSync(local("./package.json"))).version,
+    layout: () => {
+      const speech = speechBuild();
+      return {
+        startupFile: local("./startup.json"),
+        dataDir: resolve(local("./data/")),
+        loadDefaults,
+        credits: speech
+          ? credits(
+              bridgeLicense,
+              readFileSync(join(speech.dir, "speech.cpp-LICENSE"), "utf8"),
+              speech.info.speech,
+              `ほかのソフトウェアのライセンスは、${speech.dir} と、tts-bridge の node_modules・discord/node_modules にあります。`,
+            )
+          : credits(bridgeLicense),
+        extensions,
+        speechDir: speech?.dir ?? null,
+        speechPlace: speech && `speech.cppのビルド（${speech.dir}）`,
+      };
     },
   });
 } catch (error) {

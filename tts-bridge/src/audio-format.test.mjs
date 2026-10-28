@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   loadOpus,
   encodeOggOpus,
@@ -31,10 +32,18 @@ function oggPackets(ogg) {
   return { packets, granule };
 }
 
+test("Bridge and the Discord runtime pin the same opusscript", () => {
+  // npm start encodes Opus without the Discord dependencies; a package uses
+  // the Discord runtime's copy. Both must be the same release.
+  const pin = (path) =>
+    JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"))
+      .dependencies.opusscript;
+  assert.equal(pin("../package.json"), pin("../discord/package.json"));
+});
+
 test("Opus output is a valid Ogg stream that decodes back to the speech", async (t) => {
   const Opus = await loadOpus();
-  if (!Opus)
-    return t.skip("opusscript is not installed (npm --prefix discord ci)");
+  if (!Opus) return t.skip("opusscript is not installed (npm ci)");
   const wav = mockWav(1);
   const ogg = encodeOggOpus(wav, Opus, 64000);
   assert.ok(ogg.length < wav.length / 4);

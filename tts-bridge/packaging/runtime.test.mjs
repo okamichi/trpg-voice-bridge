@@ -16,11 +16,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { RuntimeSettings, platformBackends } from "../src/runtime/settings.mjs";
 import {
   SpeechRuntime,
+  speechBuildMatches,
   speechLifecycle,
+  speechTarget,
   stopMessage,
 } from "../src/runtime/speech.mjs";
 import { createApp } from "../src/http.mjs";
 import { startBridge } from "../src/runtime/launcher.mjs";
+import { runBridge } from "../src/runtime/run.mjs";
 import { StartupSettings } from "../src/runtime/startup.mjs";
 import { initialConfig } from "../src/store.mjs";
 
@@ -76,6 +79,58 @@ test("runtime builds follow the platform and reject another platform's build", (
       JSON.stringify({ mode: "bundled", model: "", ttsPort: 18088 }),
     );
     assert.equal(new RuntimeSettings(dir, {}, windows).saved.backend, "vulkan");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("speech.cpp builds exist for the package targets and the pinned source only", () => {
+  assert.equal(speechTarget("darwin", "arm64"), "darwin-arm64");
+  assert.equal(speechTarget("win32", "x64"), "win32-x64");
+  for (const [platform, arch] of [
+    ["darwin", "x64"],
+    ["linux", "x64"],
+    ["win32", "arm64"],
+  ])
+    assert.equal(speechTarget(platform, arch), null);
+  const pins = JSON.parse(readFileSync("packaging/speech-lock.json", "utf8"));
+  const info = { ...pins, target: "darwin-arm64", backends: ["metal"] };
+  assert.ok(speechBuildMatches(info, pins, "darwin-arm64"));
+  assert.ok(!speechBuildMatches(info, pins, "win32-x64"));
+  for (const name of ["speech", "ggml"])
+    assert.ok(
+      !speechBuildMatches(
+        { ...info, [name]: { ...info[name], commit: "0".repeat(40) } },
+        pins,
+        "darwin-arm64",
+      ),
+    );
+  assert.ok(!speechBuildMatches({}, pins, "darwin-arm64"));
+  assert.ok(!speechBuildMatches(undefined, pins, "darwin-arm64"));
+});
+
+test("messages about a missing speech name where the build is", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "runtime-place-"));
+  try {
+    for (const [place, expected] of [
+      [undefined, "展開したフォルダのruntime/speech"],
+      ["speech.cppのビルド（/src/build）", "speech.cppのビルド（/src/build）"],
+    ]) {
+      const runtime = new SpeechRuntime({
+        dataDir: dir,
+        runtimeDir: join(dir, "missing"),
+        place,
+      });
+      await assert.rejects(runtime.models.catalog(""), (e) =>
+        e.message.includes(`同梱のspeechを起動できません。${expected}`),
+      );
+      // A refused lock also closes the models, so it comes last.
+      await assert.rejects(runtime.acquire(), (e) =>
+        e.message.includes(
+          `同梱の起動管理プログラムを開始できません。${expected}`,
+        ),
+      );
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -524,6 +579,66 @@ test(
       await assert.rejects(blocked.acquire(), /同じ保存先のBridge/);
     } finally {
       await other?.close();
+      await handle.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "a source start with the speech.cpp build gives the admin page the bundled TTS",
+  { skip: !existsSync(join(runtimeDir, "build.json")) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-source-"));
+    const probe = createServer();
+    await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+    const port = probe.address().port;
+    await new Promise((r) => probe.close(r));
+    const handle = await runBridge({
+      args: [
+        "--no-browser",
+        "--port",
+        String(port),
+        "--data-dir",
+        join(dir, "data"),
+      ],
+      layout: () => ({
+        startupFile: join(dir, "startup.json"),
+        dataDir: join(dir, "default"),
+        loadDefaults: () => {
+          const initial = initialConfig({});
+          initial.provider.type = "mock";
+          return initial;
+        },
+        credits: { entries: [], footer: "" },
+        extensions: [],
+        speechDir: runtimeDir,
+        speechPlace: `speech.cppのビルド（${runtimeDir}）`,
+      }),
+    });
+    try {
+      const admin = async (path) => {
+        const response = await fetch(
+          `http://127.0.0.1:${port}/api/v1/admin/${path}`,
+          {
+            headers: {
+              Authorization: `Bearer ${handle.app.store.secrets.admin}`,
+            },
+          },
+        );
+        assert.equal(response.status, 200);
+        return response.json();
+      };
+      const diagnostics = await admin("diagnostics");
+      assert.equal(diagnostics.runtime.status, "external");
+      assert.deepEqual(diagnostics.runtime.backends, platformBackends());
+      assert.equal((await admin("runtime")).active.mode, "external");
+      // The data directory named by --data-dir is locked for this Bridge.
+      await assert.rejects(
+        new SpeechRuntime({ dataDir: join(dir, "data"), runtimeDir }).acquire(),
+        /同じ保存先のBridge/,
+      );
+    } finally {
       await handle.stop();
       rmSync(dir, { recursive: true, force: true });
     }
