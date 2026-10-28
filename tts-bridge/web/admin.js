@@ -128,11 +128,7 @@ async function refresh() {
   );
   setState(
     $("collectorState"),
-    pending.length
-      ? "承認待ち"
-      : collectorConnected
-        ? "接続中"
-        : "未接続",
+    pending.length ? "承認待ち" : collectorConnected ? "接続中" : "未接続",
     pending.length ? "warn" : collectorConnected ? "ok" : "",
   );
   setState(

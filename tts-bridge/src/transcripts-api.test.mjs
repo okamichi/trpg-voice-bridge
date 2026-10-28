@@ -11,7 +11,11 @@ for (const enabled of [true, false])
     const dataDir = mkdtempSync(join(tmpdir(), "transcript-api-"));
     const initial = initialConfig({});
     initial.provider.type = "mock";
-    const source = { adapter: "fixture", instanceId: "test", contextId: "room" };
+    const source = {
+      adapter: "fixture",
+      instanceId: "test",
+      contextId: "room",
+    };
     initial.sources = [source];
     let capability;
     const app = createApp({
@@ -144,7 +148,11 @@ for (const enabled of [true, false])
         roomId: initial.roomId,
         sessionId: app.engine.sessionId,
         source: { ...source, messageId: "m1", revision: 0 },
-        speaker: { kind: "character", id: "ornithogalum", name: "オーニソガラム" },
+        speaker: {
+          kind: "character",
+          id: "ornithogalum",
+          name: "オーニソガラム",
+        },
         channel: "main",
         kind: "dialogue",
         visibility: "public",

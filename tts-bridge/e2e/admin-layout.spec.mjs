@@ -24,7 +24,7 @@ async function diagnostics(page, value) {
     await route.fulfill({ json: { ...(await response.json()), ...value } });
   });
 }
-test("steps initialize once, pending approvals reopen Collector, copy and session status work", async ({
+test("steps start closed, pending approvals reopen Collector, copy and session status work", async ({
   page,
   context,
 }) => {
@@ -55,9 +55,8 @@ test("steps initialize once, pending approvals reopen Collector, copy and sessio
     "終了",
     "初期化",
   ]);
-  await expect(page.locator("#stepTts")).toHaveAttribute("open", "");
-  await expect(page.locator("#stepCollector")).not.toHaveAttribute("open");
-  await expect(page.locator("#stepTuning")).not.toHaveAttribute("open");
+  await expect(page.locator("details[open]")).toHaveCount(0);
+  await openStep(page, "stepTts");
   await page.locator("#stepTts > summary").click();
   await page.clock.fastForward(5100);
   await expect(page.locator("#stepTts")).not.toHaveAttribute("open");
@@ -76,6 +75,7 @@ test("steps initialize once, pending approvals reopen Collector, copy and sessio
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     "chrome://extensions",
   );
+  await openStep(page, "stepSession");
   await page.locator("#toggle").click();
   await expect(page.locator("#sessionState")).toHaveText(
     "読み上げ中 ／ 参加者 0 接続",
@@ -148,6 +148,7 @@ test("shutdown notice survives polling and runtime description requires capabili
   await page.clock.install();
   await page.goto(app.adminUrl());
   await expect(page.locator("#shutdownNote")).toBeHidden();
+  await openStep(page, "stepEnd");
   await page.locator("#shutdownSection [data-shutdown]").click();
   await expect(page.locator("#notice")).toContainText(
     "Bridgeを終了しています。",

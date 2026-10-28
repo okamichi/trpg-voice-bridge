@@ -388,6 +388,7 @@ test("management startup link, simplified controls and reset confirmation", asyn
 }) => {
   await page.goto(app.adminUrl());
   await expect(page.locator("#connection")).toContainText("接続済み");
+  await openStep(page, "stepSession");
   await page.getByRole("button", { name: "読み上げ停止", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "読み上げ開始", exact: true }),

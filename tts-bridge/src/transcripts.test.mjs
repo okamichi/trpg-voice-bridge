@@ -163,7 +163,11 @@ test("transcripts: chat lines join the timeline at their acceptance time", (t) =
       .trim()
       .split("\n")
       .map((line) => line.replace(/^\[[^\]]+\] /, "")),
-    ["[チャット] メリッサ: 扉を開けます", "参加者: 発言20", "[チャット] 冒険者: 続く"],
+    [
+      "[チャット] メリッサ: 扉を開けます",
+      "参加者: 発言20",
+      "[チャット] 冒険者: 続く",
+    ],
   );
   assert.deepEqual(
     files
