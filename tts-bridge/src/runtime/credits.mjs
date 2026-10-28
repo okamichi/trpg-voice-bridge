@@ -1,4 +1,10 @@
-export function credits(bridgeLicense, speechLicense, speech) {
+// footer says where the other licenses are, for a credit list naming speech.cpp.
+export function credits(
+  bridgeLicense,
+  speechLicense,
+  speech,
+  footer = "ほかに同梱しているソフトウェアのライセンスは、展開したフォルダのlicensesとruntime/speechにあります。",
+) {
   const entries = [
     {
       title: "TRPG Voice Bridge",
@@ -38,8 +44,6 @@ export function credits(bridgeLicense, speechLicense, speech) {
     });
   return {
     entries,
-    footer: speechLicense
-      ? "ほかに同梱しているソフトウェアのライセンスは、展開したフォルダのlicensesとruntime/speechにあります。"
-      : "",
+    footer: speechLicense ? footer : "",
   };
 }
