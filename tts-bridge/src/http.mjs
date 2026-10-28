@@ -73,6 +73,12 @@ export function createApp({
       }
     : null;
   engine.transcriptLog = transcripts;
+  // Chat lines from Player, Chatter and Collector all pass acceptChat(), which
+  // announces each new message once.
+  if (transcripts)
+    engine.on("notification", (n) => {
+      if (n.type === "chat.message.created") transcripts.chat(n.message);
+    });
   const installedExtensions = new Map();
   for (const factory of extensions) {
     try {

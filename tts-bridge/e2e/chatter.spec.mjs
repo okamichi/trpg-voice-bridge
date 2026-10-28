@@ -290,9 +290,13 @@ test("Chatter extension joins without Collector, shares chat with Player and res
     const downloadEvent = new Promise((resolve) =>
       cdp.once("Browser.downloadWillBegin", resolve),
     );
+    // expect.poll fails at once on a thrown error, so stay falsy until the
+    // panel has loaded and shows the download.
     await expect
       .poll(() =>
-        side.evaluate('!document.querySelector("#transcriptDownloads").hidden'),
+        side.evaluate(
+          'document.querySelector("#transcriptDownloads")?.hidden === false',
+        ),
       )
       .toBe(true);
     await side.evaluate(

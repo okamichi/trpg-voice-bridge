@@ -11,6 +11,8 @@ for (const enabled of [true, false])
     const dataDir = mkdtempSync(join(tmpdir(), "transcript-api-"));
     const initial = initialConfig({});
     initial.provider.type = "mock";
+    const source = { adapter: "fixture", instanceId: "test", contextId: "room" };
+    initial.sources = [source];
     let capability;
     const app = createApp({
       dataDir,
@@ -102,5 +104,72 @@ for (const enabled of [true, false])
           Buffer.from("こんにちは"),
         ),
       );
+    }
+    // Chat lines are logged when accepted, from Player and from Collector,
+    // whether or not the text is shared with participants.
+    const room = `/api/v1/rooms/${initial.roomId}/`;
+    const once = () => ({ ...cookie, "Idempotency-Key": randomUUID() });
+    const character = (
+      await (
+        await request(room + "characters", once(), { displayName: "冒険者" })
+      ).json()
+    ).value;
+    const posted = await request(room + "messages", once(), {
+      characterId: character.id,
+      text: "扉を開けます",
+      sessionId: app.engine.sessionId,
+      clientMessageId: randomUUID(),
+    });
+    assert.equal(posted.status, 201);
+    const manage = (path, method, body) =>
+      fetch(base + path, {
+        method,
+        headers: { "Content-Type": "application/json", ...admin },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    assert.equal(
+      (
+        await manage("/api/v1/admin/subtitles", "PUT", {
+          before: true,
+          publishTextToPlayers: false,
+        })
+      ).status,
+      200,
+    );
+    app.engine.connect({ source, collectorId: "collector" });
+    const ingested = app.engine.ingress(
+      {
+        schemaVersion: 1,
+        eventId: "e1",
+        roomId: initial.roomId,
+        sessionId: app.engine.sessionId,
+        source: { ...source, messageId: "m1", revision: 0 },
+        speaker: { kind: "character", id: "ornithogalum", name: "オーニソガラム" },
+        channel: "main",
+        kind: "dialogue",
+        visibility: "public",
+        text: "ファイアボールを唱える",
+        occurredAt: new Date().toISOString(),
+      },
+      "collector",
+    );
+    assert.ok(ingested.messageId, JSON.stringify(ingested));
+    assert.equal(
+      (await manage("/api/v1/admin/chat-history", "DELETE")).status,
+      200,
+    );
+    assert.equal(app.store.chat.list({}).messages.length, 0);
+    if (enabled) {
+      assert.equal(capability.snapshot().chats, 2);
+      const res = await request(path, cookie);
+      assert.equal(res.headers.get("x-transcript-count"), "3");
+      const zip = Buffer.from(await res.arrayBuffer());
+      for (const line of [
+        "[チャット] 冒険者: 扉を開けます",
+        "[チャット] オーニソガラム: ファイアボールを唱える",
+        '"source":"Player"',
+        '"source":"Collector"',
+      ])
+        assert.ok(zip.includes(Buffer.from(line)), line);
     }
   });

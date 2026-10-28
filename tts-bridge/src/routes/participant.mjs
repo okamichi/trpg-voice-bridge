@@ -237,7 +237,9 @@ export async function participantRoutes(ctx, req, res, url) {
         "Cache-Control": "no-store",
         "Access-Control-Expose-Headers":
           "Content-Disposition, X-Transcript-Count",
-        "X-Transcript-Count": String(ctx.transcripts.count),
+        "X-Transcript-Count": String(
+          ctx.transcripts.count + ctx.transcripts.chats,
+        ),
       });
       res.end(zip);
       return true;

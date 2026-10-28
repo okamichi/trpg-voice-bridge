@@ -31,6 +31,7 @@ export class TranscriptLog {
     this.path = "";
     this.pending = [];
     this.count = 0;
+    this.chats = 0;
     this.offset = 0;
     this.error = "";
     this.unwritten = 0;
@@ -40,6 +41,7 @@ export class TranscriptLog {
     return {
       enabled: true,
       count: this.count,
+      chats: this.chats,
       path: this.path,
       error: this.error,
     };
@@ -47,6 +49,20 @@ export class TranscriptLog {
   add(entry) {
     this.count++;
     this.enqueue({ ...entry, time: new Date(entry.time).toISOString() });
+  }
+  // A chat line is stamped with the time Bridge accepted it, whatever its
+  // source. Clearing the chat history later leaves the log as written.
+  chat(message) {
+    this.chats++;
+    this.enqueue({
+      type: "chat",
+      time: new Date(message.createdAt).toISOString(),
+      messageId: message.id,
+      source: message.source,
+      characterId: message.characterId ?? null,
+      speakerName: message.speakerName,
+      text: message.text,
+    });
   }
   dropped(reason, count) {
     if (count > 0)
@@ -154,9 +170,13 @@ export class TranscriptLog {
       const time = new Date(e.time).toLocaleTimeString("ja-JP", {
         hour12: false,
       });
-      return e.type === "dropped"
-        ? `[${time}] ※ 文字にできなかった発言: ${e.count}件（${reasons[e.reason] ?? e.reason}）`
-        : `[${time}] ${e.speakerName}: ${e.text}`.replace(/[\r\n]/g, " ");
+      // Rows lost to an unwritable file may be chat lines, not just speech.
+      if (e.type === "dropped")
+        return `[${time}] ※ ${e.reason === "unwritten" ? "記録できなかった行" : "文字にできなかった発言"}: ${e.count}件（${reasons[e.reason] ?? e.reason}）`;
+      return `[${time}] ${e.type === "chat" ? "[チャット] " : ""}${e.speakerName}: ${e.text}`.replace(
+        /[\r\n]/g,
+        " ",
+      );
     });
     return zipFiles(
       new Map([

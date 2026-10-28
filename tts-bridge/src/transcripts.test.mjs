@@ -110,11 +110,69 @@ test("transcripts: unavailable folder is nonfatal; loss and shutdown records sur
     .split("\n")
     .map(JSON.parse);
   assert.equal(rows.find((e) => e.reason === "unwritten").count, 1);
+  assert.match(
+    unzip(log.zip()).get("transcript.txt"),
+    /記録できなかった行: 1件（書けない行の上限）/,
+  );
   fail = false;
   log.flush();
   log.dropped("shutdown", 3);
   assert.match(unzip(log.zip()).get("transcript.txt"), /3件（終了の期限切れ）/);
   assert.equal(log.pending.length, 0);
+});
+test("transcripts: chat lines join the timeline at their acceptance time", (t) => {
+  const log = setup(t);
+  log.add(entry(20));
+  log.chat({
+    id: "m1",
+    createdAt: 1700000000010,
+    source: "Collector",
+    characterId: "c1",
+    speakerName: "メリッサ",
+    text: "扉を開けます",
+  });
+  log.chat({
+    id: "m2",
+    createdAt: 1700000000030,
+    source: "Player",
+    speakerName: "冒険者",
+    text: "続く",
+  });
+  assert.equal(log.count, 1);
+  assert.equal(log.chats, 2);
+  assert.equal(log.snapshot().chats, 2);
+  const onDisk = fs
+    .readFileSync(log.path, "utf8")
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+  assert.deepEqual(onDisk[1], {
+    type: "chat",
+    time: new Date(1700000000010).toISOString(),
+    messageId: "m1",
+    source: "Collector",
+    characterId: "c1",
+    speakerName: "メリッサ",
+    text: "扉を開けます",
+  });
+  assert.equal(onDisk[2].characterId, null);
+  const files = unzip(log.zip());
+  assert.deepEqual(
+    files
+      .get("transcript.txt")
+      .trim()
+      .split("\n")
+      .map((line) => line.replace(/^\[[^\]]+\] /, "")),
+    ["[チャット] メリッサ: 扉を開けます", "参加者: 発言20", "[チャット] 冒険者: 続く"],
+  );
+  assert.deepEqual(
+    files
+      .get("transcript.jsonl")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).type ?? "speech"),
+    ["chat", "speech", "chat"],
+  );
 });
 test("transcripts: empty archive contains two empty files", (t) => {
   assert.deepEqual([...unzip(setup(t).zip()).values()], ["", ""]);
