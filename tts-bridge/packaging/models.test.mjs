@@ -223,7 +223,7 @@ test("credits use the supplied repository for the link and label", async () => {
   );
 });
 
-test("recognition catalog exposes four Japanese models and shares the download reservation", async (t) => {
+test("recognition catalog exposes four Japanese models", async (t) => {
   const { models, dir } = await setup(t);
   writeFileSync(join(dir, "mode"), "recognition");
   const listed = await models.list();
@@ -237,12 +237,22 @@ test("recognition catalog exposes four Japanese models and shares the download r
         m.choice.startsWith("parakeet-tdt-0.6b-v3:"),
     ),
   );
-  await models.pull("qwen3-asr-0.6b:q8_0");
-  await assert.rejects(models.pull(choice), { status: 409 });
-  await models.finished;
-  assert.equal(models.job.status, "done");
-  assert.ok(
-    (await models.list()).models.find((m) => m.choice === "qwen3-asr-0.6b:q8_0")
-      .fetched,
-  );
 });
+
+test(
+  "recognition shares the download reservation and verifies completion",
+  { skip: !existsSync(supervisor) },
+  async (t) => {
+    const { models, dir } = await setup(t);
+    writeFileSync(join(dir, "mode"), "recognition");
+    await models.pull("qwen3-asr-0.6b:q8_0");
+    await assert.rejects(models.pull(choice), { status: 409 });
+    await models.finished;
+    assert.equal(models.job.status, "done");
+    assert.ok(
+      (await models.list()).models.find(
+        (m) => m.choice === "qwen3-asr-0.6b:q8_0",
+      ).fetched,
+    );
+  },
+);
