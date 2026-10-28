@@ -136,7 +136,8 @@ test("a failed restart comes back on the old settings and explains why", async (
   await page.getByRole("button", { name: "保存して再起動" }).click();
   await expect(page.locator("#notice")).toContainText("元の設定で起動しました");
   expect(new URL(page.url()).port).toBe(String(port));
-  await expect(page.locator("#stepStartup")).toHaveAttribute("open", "");
+  await expect(page.locator("#stepStartup")).not.toHaveAttribute("open");
+  await openStep(page, "stepStartup");
   await expect(page.locator("#startupError")).toContainText(
     "元の設定で起動しました",
   );

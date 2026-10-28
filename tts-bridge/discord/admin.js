@@ -36,17 +36,29 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
         </li>
       </ol>
     </details>
-    <label><input data-id="enabled" type="checkbox">Discord Botに接続する</label>
-    <p data-id="status" role="status"></p>
+    <fieldset><legend>Botの利用とログイン</legend>
+    <label><input data-id="enabled" type="checkbox">Discord Botを利用する</label>
+    <p>有効にすると、保存したトークンでログインします。VCへの入室は下の「VCに入室」で行います。</p>
     <p data-id="error" role="alert"></p>
     <p data-id="notice" role="status"></p>
-    <label>Botトークン<input data-id="token" type="password" autocomplete="new-password" maxlength="200"></label>
-    <span data-id="tokenSet"></span>
+    <label>Botトークン（<span data-id="tokenSet" role="status"></span>）<input data-id="token" type="password" autocomplete="new-password" maxlength="200"></label>
     <button data-id="save">保存してログイン</button>
     <button data-id="delete">トークンを削除</button>
-    <p data-id="botName"></p><button data-id="invite">招待URLをコピー</button>
+    <p data-id="status" role="status"></p>
+    <p data-id="botName"></p>
+    </fieldset>
+    <fieldset><legend>Discordサーバーへの招待</legend>
+    <p>Botを利用するサーバーに、まだ招待していない場合に使います。</p>
+    <button data-id="invite">招待URLをコピー</button>
+    </fieldset>
+    <fieldset><legend>ボイスチャンネルへの入室</legend>
     <label>ボイスチャンネル<select data-id="channel"></select></label>
-    <button data-id="connect">接続</button><button data-id="disconnect">切断</button>
+    <button data-id="connect">VCに入室</button><button data-id="disconnect">VCから退出</button>
+    <p>Bridge起動時は自動入室しません。</p>
+    <p data-id="voiceStatus" role="status"></p>
+    <p data-id="transcription" role="status"></p>
+    <p data-id="transcriptionNote" hidden>文字起こし中は、Botのスピーカーミュートが解除されます。</p>
+    </fieldset>
     <fieldset><legend>VTTチャットからDiscordで声をデザイン</legend>
     <label><input data-id="designEnabled" type="checkbox">登録コマンドで試聴フォームを開く</label>
     <label>専用テキストチャンネル<select data-id="designChannel"></select></label>
@@ -103,12 +115,25 @@ export async function mount(el, { api, setConnectionStatus = () => {} }) {
             ? "ok"
             : undefined,
     );
-    $("status").textContent = states[s.state] ?? s.state;
+    $("status").textContent =
+      `ログイン状態：${s.botName ? "ログイン済み" : "未ログイン"}`;
+    $("voiceStatus").textContent =
+      `通話状態：${s.state === "connected" ? `入室済み（${destination.replace(/ — $/, "")}）` : s.state === "connecting" ? "入室中" : "未入室"}`;
+    const transcription = s.transcription;
+    $("transcription").textContent =
+      `文字起こし：${transcription?.error ? `エラー：${transcription.error}` : transcription?.enabled ? `有効（${transcription.count ?? 0}件）` : "無効（利用するには先に「TTSの準備」で内蔵speech.cppでSTTを有効化が必要）"}`;
+    if (transcription?.pending > 20)
+      $("transcription").textContent += `・順番待ち ${transcription.pending}件`;
+    if (transcription?.dropped)
+      $("transcription").textContent += `・破棄 ${transcription.dropped}件`;
+    $("transcriptionNote").hidden = !transcription?.enabled;
     $("error").textContent = !s.installed
       ? "cd discord && npm ci を実行してください"
       : s.error;
-    $("tokenSet").textContent = s.tokenSet ? "設定済み" : "未設定";
-    $("botName").textContent = s.botName;
+    $("tokenSet").textContent = s.tokenSet
+      ? "設定済み"
+      : "未設定：作成したApplicationのトークンを設定してください";
+    $("botName").textContent = `Bot名：${s.botName || "未取得"}`;
     $("invite").disabled = !s.inviteUrl || busy;
     $("connect").disabled = !s.botName || !s.channelId || busy;
     $("disconnect").disabled = !s.botName || busy;

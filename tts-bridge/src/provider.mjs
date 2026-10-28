@@ -237,7 +237,7 @@ export async function synthesize(
       /no voice named|voice.*not found|unknown voice/i.test(problem.message)
     )
       throw new Error(
-        `TTS HTTP 400: 参照音声「${voice.voiceId}」が現在のTTSサーバーに登録されていません。音声フォルダーの指定と登録済み音声を確認してください`,
+        `TTS HTTP 400: 参照音声「${voice.voiceId}」が現在のTTSサーバーに登録されていません。音声フォルダの指定と登録済み音声を確認してください`,
       );
     const message =
       typeof problem?.message === "string"

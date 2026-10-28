@@ -1,3 +1,4 @@
+import { openStep } from "./admin-helpers.mjs";
 import { test, expect, chromium } from "@playwright/test";
 import { createServer } from "node:http";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -34,16 +35,15 @@ test("MV3 extension connects through isolated relay; stop releases collector lea
       {
         channel: "chromium",
         headless: true,
-        args: [
-          `--disable-extensions-except=${extension}`,
-          `--load-extension=${extension}`,
-        ],
+        ignoreDefaultArgs: ["--disable-extensions"],
+        args: ["--enable-unsafe-extension-debugging"],
       },
     );
-    const worker =
-      context.serviceWorkers()[0] ??
-      (await context.waitForEvent("serviceworker"));
-    const extensionId = new URL(worker.url()).host;
+    const cdp = await context.browser().newBrowserCDPSession();
+    const { id: extensionId } = await cdp.send("Extensions.loadUnpacked", {
+      path: extension,
+    });
+    await cdp.detach();
     const vtt = await context.newPage();
     await vtt.goto(`http://127.0.0.1:${fixture.address().port}/fixture`);
     await vtt.evaluate(() => {
@@ -86,6 +86,7 @@ test("MV3 extension connects through isolated relay; stop releases collector lea
     )[1];
     const adminPage = await context.newPage();
     await adminPage.goto(app.adminUrl());
+    await openStep(adminPage, "stepCollector");
     await expect(adminPage.locator("#pairings")).toContainText(code);
     await adminPage.getByRole("button", { name: "承認", exact: true }).click();
     await expect(adminPage.locator("#pairingSection")).not.toBeVisible();

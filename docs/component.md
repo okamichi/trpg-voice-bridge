@@ -17,6 +17,8 @@ flowchart LR
   TTS -->|音声| Bridge
   Bridge --> Bot[Discord Bot]
   Bot --> VC[ボイスチャンネル]
+  VC -->|STT有効時の参加者の声| Bot
+  Bot -->|文字起こしの記録| Bridge
   Bot <-->|声づくり| Text[専用テキストチャンネル]
 ```
 
@@ -65,11 +67,14 @@ VTTとPlayer・Chatterの発言は、同じ卓の履歴へ集まります。Play
 | 起動・停止     | Bridgeが行う                 | 利用者が別に行う                    | 利用者が別に行う                                               |
 | モデル指定     | 管理画面から取得・選択       | TTS側で指定                         | TTS側で指定                                                    |
 | 接続先の種類   | Bridgeが本家speech.cppを選ぶ | 「speech.cpp（本家）」              | 「Irodori-TTS-Server / speech.cpp互換フォーク」                |
+| Discordの文字起こし | STTモデルを指定して有効化 | 利用不可 | 利用不可 |
 | 参照音声       | Bridgeが元WAVを保存して復元  | Bridgeが元WAVを保存して不足分を登録 | TTS側の保存機能を利用。Bridgeから登録した元WAVはBridgeにも保存 |
 
 外部とはBridgeが起動管理しない意味で、同じPC上の別プロセスも含みます。また、本家speech.cppの参照音声の登録にはローカル接続が必要です。
 
 内蔵のspeech.cppではモデル読込後に管理対象の音声を一括確認・復元し、それから準備完了になります。外部では生成に使う音声を生成前に確認し、不足分を復元します。全件の確認・復元は管理画面から実行できます。
+
+内蔵speech.cppでは、音声合成と文字起こしを同じプロセスで動かします。STTは既定で無効です。参加者の同意を得て有効にすると、Player・Chatterの「文字起こしデータのダウンロード」から今回の起動以降の記録を取得できます。ファイルは既定でBridgeの保存先の `transcripts/` に残ります。[Discordの文字起こし](discord.md#ボイスチャンネルの発言を文字起こしする)に設定と保存範囲を説明しています。
 
 ## Bridgeを公開するか
 

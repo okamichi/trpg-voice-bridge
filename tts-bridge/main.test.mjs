@@ -13,6 +13,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Store, initialConfig } from "./src/store.mjs";
 import { speechTarget } from "./src/runtime/speech.mjs";
 
 const main = fileURLToPath(new URL("./main.mjs", import.meta.url));
@@ -164,6 +165,85 @@ test(
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "npm start exposes STT settings, records and ZIP downloads through the shared runtime",
+  { skip: !speechTarget() || !existsSync(join(build, "build.json")) },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "main-stt-"));
+    const data = join(dir, "data");
+    const initial = initialConfig({});
+    initial.provider.type = "mock";
+    const store = new Store(data, initial);
+    const token = store.secrets.admin;
+    store.close();
+    const stt = {
+      enabled: true,
+      model: join(dir, "missing-asr.gguf"),
+      logDir: join(dir, "transcripts"),
+    };
+    writeFileSync(
+      join(data, "runtime.json"),
+      JSON.stringify({
+        mode: "bundled",
+        model: join(dir, "missing-tts.gguf"),
+        ttsPort: await freePort(),
+        stt,
+      }),
+    );
+    const port = await freePort();
+    const child = start(dir, [
+      "--no-browser",
+      "--data-dir",
+      data,
+      "--port",
+      String(port),
+    ]);
+    const base = `http://127.0.0.1:${port}`;
+    const request = (path, method = "GET", body) =>
+      fetch(base + path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    try {
+      await ready(child);
+      const response = await request("/api/v1/admin/runtime");
+      assert.equal(response.status, 200);
+      const runtime = await response.json();
+      assert.deepEqual(runtime.active.stt, stt);
+      assert.equal(runtime.stt.enabled, true);
+      assert.equal(runtime.stt.status, "error");
+      assert.equal(runtime.transcription.enabled, true);
+      assert.ok(existsSync(runtime.transcription.path));
+      assert.equal(runtime.transcription.path.startsWith(stt.logDir), true);
+      const root = `/api/v1/rooms/${initial.roomId}`;
+      const state = await (await request(root + "/state")).json();
+      assert.deepEqual(state.transcription, { enabled: true, count: 0 });
+      const zip = await request(root + "/transcripts");
+      assert.equal(zip.status, 200);
+      assert.equal(zip.headers.get("content-type"), "application/zip");
+      assert.equal(
+        Buffer.from(await zip.arrayBuffer()).readUInt32LE(0),
+        0x04034b50,
+      );
+      const saved = await request("/api/v1/admin/runtime", "PUT", {
+        ...runtime.saved,
+        stt: { ...stt, enabled: false },
+      });
+      assert.equal(saved.status, 200);
+      assert.equal((await saved.json()).restartRequired, true);
+      assert.ok(!child.output.includes(token));
+    } finally {
+      child.kill();
+      await child.done;
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20 });
     }
   },
 );

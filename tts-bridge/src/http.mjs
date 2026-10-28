@@ -1,3 +1,4 @@
+import { TranscriptLog } from "./transcripts.mjs";
 import { chatterDownload } from "../chatter/zip.mjs";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -50,10 +51,38 @@ export function createApp({
   } catch {
     console.error("Chatterのダウンロード用ZIPを作成できませんでした");
   }
+  const transcripts = runtime?.settings?.active?.stt?.enabled
+    ? new TranscriptLog({
+        dataDir,
+        logDir: runtime.settings.active.stt.logDir,
+        onError: (message) => console.error(`[STT] ${message}`),
+      })
+    : null;
+  const transcription = transcripts
+    ? {
+        transcribe: (wav, options) => runtime.transcribe(wav, options),
+        add: (entry) => transcripts.add(entry),
+        dropped: (reason, count) => transcripts.dropped(reason, count),
+        ready: () => runtime.snapshot().stt.status === "ready",
+        onChange: (listener) => runtime.onSttChange(listener),
+        snapshot: () => ({
+          ...transcripts.snapshot(),
+          ...runtime.snapshot().stt,
+          error: runtime.snapshot().stt.error || transcripts.error,
+        }),
+      }
+    : null;
+  engine.transcriptLog = transcripts;
+  // Chat lines from Player, Chatter and Collector all pass acceptChat(), which
+  // announces each new message once.
+  if (transcripts)
+    engine.on("notification", (n) => {
+      if (n.type === "chat.message.created") transcripts.chat(n.message);
+    });
   const installedExtensions = new Map();
   for (const factory of extensions) {
     try {
-      const extension = factory({ engine, dataDir });
+      const extension = factory({ engine, dataDir, transcription });
       if (
         !/^[a-z0-9-]+$/.test(extension.id) ||
         installedExtensions.has(extension.id)
@@ -272,6 +301,7 @@ export function createApp({
     store,
     engine,
     runtime,
+    transcripts,
     onShutdown,
     startupSettings,
     onRestart,
@@ -567,6 +597,7 @@ export function createApp({
           Promise.resolve().then(() => ext.close()),
         ),
       );
+      transcripts?.flush();
       engine.close();
       for (const ws of wss.clients) ws.terminate();
       await new Promise((r) => server.close(r));

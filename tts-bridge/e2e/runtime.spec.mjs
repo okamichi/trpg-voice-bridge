@@ -354,6 +354,7 @@ test("bundled runtime UI saves restart settings while keeping active mode and ex
       model: "",
       ttsPort: 18123,
       backend: "metal",
+      stt: { enabled: false, model: "", logDir: "" },
     });
     await page.reload();
     await openStep(page, "stepTts");
@@ -389,7 +390,9 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
   try {
     const url = app.adminUrl().replace(":0/", `:${app.server.address().port}/`);
     await page.goto(url);
+    await expect(page.locator("details[open]")).toHaveCount(0);
     await openStep(page, "stepTts");
+    await openStep(page, "stepEnd");
     await expect(
       page.locator("#shutdownSection [data-shutdown]"),
     ).toBeVisible();
@@ -414,6 +417,7 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
       model: "",
       ttsPort: 18088,
       backend: "cpu",
+      stt: { enabled: false, model: "", logDir: "" },
     });
     await page.reload();
     await openStep(page, "stepTts");

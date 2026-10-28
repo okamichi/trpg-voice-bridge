@@ -97,7 +97,7 @@ test("Discord voice design is opt-in and saves a separate text destination witho
   await expect(
     panel.getByLabel("登録コマンドで試聴フォームを開く"),
   ).not.toBeChecked();
-  await panel.getByLabel("Discord Botに接続する").check();
+  await panel.getByLabel("Discord Botを利用する").check();
   await panel.getByLabel("Botトークン").fill("test-token");
   await panel.getByRole("button", { name: "保存してログイン" }).click();
   await expect(
@@ -142,35 +142,42 @@ test("admin can configure, connect, preview and delete token without exposing it
     connections.getByRole("row", { name: /^Discord Bot/ }),
   ).toContainText("未使用");
   await expect(panel.locator(".state")).toHaveText("未使用");
-  await expect(panel.getByLabel("Discord Botに接続する")).toBeHidden();
+  await expect(panel.getByLabel("Discord Botを利用する")).toBeHidden();
   await panel.locator("details.step > summary").click();
-  await expect(panel.getByLabel("Discord Botに接続する")).not.toBeChecked();
+  await expect(panel.getByLabel("Discord Botを利用する")).not.toBeChecked();
   await expect(panel.getByLabel("Botトークン")).toBeVisible();
-  await panel.getByLabel("Discord Botに接続する").check();
+  await panel.getByLabel("Discord Botを利用する").check();
   await expect(panel.getByLabel("Botトークン")).toBeVisible();
-  await expect(panel.locator("[data-id=tokenSet]")).toHaveText("未設定");
+  await expect(panel.locator("[data-id=tokenSet]")).toHaveText(
+    "未設定：作成したApplicationのトークンを設定してください",
+  );
   await expect(
     panel.getByRole("button", { name: "保存してログイン" }),
   ).toBeEnabled();
   await panel.getByLabel("Botトークン").fill("test-private-token");
   await panel.getByRole("button", { name: "保存してログイン" }).click();
-  await expect(panel.locator("[data-id=status]")).toHaveText("ログイン済み");
+  await expect(panel.locator("[data-id=status]")).toHaveText(
+    "ログイン状態：ログイン済み",
+  );
+  await expect(panel.locator("[data-id=tokenSet]")).toHaveText("設定済み");
   await expect(panel.getByLabel("Botトークン")).toHaveValue("");
   await panel.getByLabel("ボイスチャンネル").selectOption(`${A}/${A}`);
   await expect(
-    panel.getByRole("button", { name: "接続", exact: true }),
+    panel.getByRole("button", { name: "VCに入室", exact: true }),
   ).toBeEnabled();
   await expect(
     panel.getByRole("option", {
       name: "TRPGサーバー / 控室（権限がありません）",
     }),
   ).toHaveJSProperty("disabled", true);
-  await panel.getByRole("button", { name: "接続", exact: true }).click();
+  await panel.getByRole("button", { name: "VCに入室", exact: true }).click();
   await expect(panel.locator(".state")).toHaveText(
     "TRPGサーバー / 一般 — 接続済み",
   );
   await expect(panel.locator(".state")).toHaveClass("state ok");
-  await expect(panel.locator("[data-id=status]")).toHaveText("接続済み");
+  await expect(panel.locator("[data-id=voiceStatus]")).toHaveText(
+    "通話状態：入室済み（TRPGサーバー / 一般）",
+  );
   await panel.locator("details.step > summary").click();
   await expect(panel.getByLabel("Botトークン")).toBeHidden();
   await expect(
@@ -186,11 +193,15 @@ test("admin can configure, connect, preview and delete token without exposing it
   await expect(panel.locator("audio")).toBeVisible();
   await expect(panel.locator("[data-id=notice]")).toHaveText("完了しました");
   expect(calls.filter((c) => c === "connect")).toHaveLength(1);
-  await panel.getByRole("button", { name: "切断", exact: true }).click();
-  await expect(panel.locator("[data-id=status]")).toHaveText("ログイン済み");
+  await panel.getByRole("button", { name: "VCから退出", exact: true }).click();
+  await expect(panel.locator("[data-id=status]")).toHaveText(
+    "ログイン状態：ログイン済み",
+  );
   page.once("dialog", (dialog) => dialog.accept());
   await panel.getByRole("button", { name: "トークンを削除" }).click();
-  await expect(panel.locator("[data-id=tokenSet]")).toHaveText("未設定");
+  await expect(panel.locator("[data-id=tokenSet]")).toHaveText(
+    "未設定：作成したApplicationのトークンを設定してください",
+  );
   expect(await panel.textContent()).not.toContain("test-private-token");
   expect(errors).toEqual([]);
 });
@@ -201,7 +212,7 @@ test("disclosure is independent of the connection checkbox and unsaved greeting 
   await page.goto(app.adminUrl());
   const panel = page.locator("#extensions"),
     details = panel.locator("details.step");
-  const enabled = panel.getByLabel("Discord Botに接続する");
+  const enabled = panel.getByLabel("Discord Botを利用する");
   await expect(details).not.toHaveAttribute("open");
   await panel.locator("details.step > summary").click();
   await enabled.check();
@@ -251,7 +262,7 @@ test("default narrator can be previewed and saved with no registered voice selec
   await page.goto(app.adminUrl());
   const panel = page.locator("#extensions");
   await panel.locator("details.step > summary").click();
-  await panel.getByLabel("Discord Botに接続する").check();
+  await panel.getByLabel("Discord Botを利用する").check();
   await expect(
     panel.getByRole("combobox", { name: "声", exact: true }),
   ).toHaveValue("");
@@ -268,7 +279,7 @@ test("default narrator can be previewed and saved with no registered voice selec
   await page.reload();
   await expect(panel.getByLabel("Botトークン")).toBeHidden();
   await panel.locator("details.step > summary").click();
-  await expect(panel.getByLabel("Discord Botに接続する")).toBeChecked();
+  await expect(panel.getByLabel("Discord Botを利用する")).toBeChecked();
   await expect(
     panel.getByRole("combobox", { name: "声", exact: true }),
   ).toHaveValue("");

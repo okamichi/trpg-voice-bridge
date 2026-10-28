@@ -84,7 +84,7 @@ export class ReferenceVoices {
           id: "",
           kind: "ledger",
           message:
-            "参照音声の管理情報を読み込めません。reference-voices.jsonとvoicesフォルダーを確認してください。破損している場合は元ファイルを保管し、バックアップから修復してください。他の状態表示は継続しています",
+            "参照音声の管理情報を読み込めません。reference-voices.jsonとvoicesフォルダを確認してください。破損している場合は元ファイルを保管し、バックアップから修復してください。他の状態表示は継続しています",
         },
       ];
     }

@@ -592,3 +592,35 @@ textarea:read-only {
   background: #687586;
   border-radius: 5px;
 }
+
+.player #transcriptDownloads {
+  margin: 4px 0;
+}
+.player #downloadTranscripts {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.player #transcriptDownloadStatus {
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.player #transcriptDownloadStatus:empty {
+  display: none;
+}
+@media (max-width: 480px) and (max-height: 700px) {
+  .player:has(#transcriptDownloads:not([hidden])) .player-actions button,
+  .player:has(#transcriptDownloads:not([hidden])) .player-tabs button {
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 6px 8px;
+    margin: 2px 0;
+  }
+  .player #transcriptDownloads {
+    margin: 2px 0;
+  }
+  .player #downloadTranscripts {
+    margin: 0;
+  }
+}

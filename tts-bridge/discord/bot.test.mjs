@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBot } from "./bot.mjs";
 import { mockWav } from "../src/provider.mjs";
-import { fakeEngine, fakeDiscord, tick, until } from "./test-helpers.mjs";
+import {
+  fakeEngine,
+  fakeDiscord,
+  fakeTranscription,
+  tick,
+  until,
+} from "./test-helpers.mjs";
 const A = "11111111111111111",
   B = "22222222222222222";
 async function setup(t, options = {}) {
@@ -357,3 +363,314 @@ for (const mode of [
       assert.ok(performance.now() - finishedAt >= leaveDelay - 1);
   });
 }
+
+const speechPcm = (seconds = 0.4) =>
+  Buffer.alloc(Math.round(48000 * 4 * seconds), 1);
+async function captureFixture(t, options = {}) {
+  const transcription = options.transcription ?? fakeTranscription();
+  const f = await setup(t, { transcription, ...options });
+  f.guilds
+    .get(A)
+    .members.cache.set("alice", { displayName: "Alice", user: { bot: false } });
+  f.guilds
+    .get(A)
+    .members.cache.set("robot", { displayName: "Robot", user: { bot: true } });
+  await f.bot.connect(A, A);
+  const receiver = f.connections[0].receiver;
+  const say = async (id = "alice", duration = 0.4) => {
+    receiver.speak(id, speechPcm(duration));
+    await receiver.pause(id);
+  };
+  return { ...f, transcription, receiver, say };
+}
+
+test("disabled STT joins deaf and never installs a receiver", async (t) => {
+  const f = await setup(t);
+  await f.bot.connect(A, A);
+  assert.equal(f.connections[0].joinConfig.selfDeaf, true);
+  assert.equal(f.connections[0].receiver.speaking.listenerCount("start"), 0);
+  assert.equal(f.bot.status().transcription.enabled, false);
+});
+
+test("delayed STT readiness undeafens once; errors stop capture and count unfinished requests", async (t) => {
+  const stt = fakeTranscription(false);
+  const f = await captureFixture(t, { transcription: stt });
+  const c = f.connections[0];
+  assert.equal(c.joinConfig.selfDeaf, true);
+  assert.equal(f.receiver.speaking.listenerCount("start"), 0);
+  stt.change(true);
+  stt.change(true);
+  assert.equal(c.joinConfig.selfDeaf, false);
+  assert.equal(f.receiver.speaking.listenerCount("start"), 1);
+  let signal;
+  stt.transcribe = async (_wav, options) => {
+    signal = options.signal;
+    return new Promise(() => {});
+  };
+  await f.say();
+  await until(() => signal);
+  await f.say();
+  stt.change(false);
+  assert.ok(signal.aborted);
+  assert.equal(f.receiver.speaking.listenerCount("start"), 0);
+  assert.equal(c.joinConfig.selfDeaf, true);
+  assert.equal(f.bot.status().transcription.failed, 2);
+  stt.change(false);
+  assert.equal(f.bot.status().transcription.failed, 2);
+  assert.deepEqual(stt.drops, [["error", 2]]);
+  stt.transcribe = async () => "再開しました";
+  stt.change(true);
+  await f.say();
+  await until(() => stt.entries.length === 1);
+  assert.equal(stt.entries[0].text, "再開しました");
+  assert.deepEqual(
+    f.calls.filter((c) => Array.isArray(c) && c[0] === "rejoin"),
+    [
+      ["rejoin", { selfDeaf: false }],
+      ["rejoin", { selfDeaf: true }],
+      ["rejoin", { selfDeaf: false }],
+    ],
+  );
+});
+
+test("readiness changing before voice Ready is reconciled when the connection becomes ready", async (t) => {
+  const stt = fakeTranscription(false);
+  const f = await setup(t, { transcription: stt, autoReady: false });
+  const connecting = f.bot.connect(A, A);
+  await until(() => f.connections.length);
+  assert.equal(f.connections[0].joinConfig.selfDeaf, true);
+  stt.change(true);
+  f.connections[0].set("ready");
+  await connecting;
+  assert.equal(f.connections[0].joinConfig.selfDeaf, false);
+  assert.equal(f.connections[0].receiver.speaking.listenerCount("start"), 1);
+});
+
+test("capture labels human utterances, caches names and skips bots and short audio", async (t) => {
+  const f = await captureFixture(t);
+  assert.equal(f.connections[0].joinConfig.selfDeaf, false);
+  f.receiver.speak("123", speechPcm());
+  f.receiver.speak("robot", speechPcm());
+  assert.equal(f.receiver.subscriptions.size, 0);
+  await f.say("alice", 0.39);
+  assert.equal(f.transcription.requests.length, 0);
+  await f.say();
+  await f.say();
+  await until(() => f.transcription.entries.length === 2);
+  const entry = f.transcription.entries[0];
+  assert.equal(entry.speakerId, "alice");
+  assert.equal(entry.speakerName, "Alice");
+  assert.equal(entry.seconds, 0.4);
+  assert.equal(typeof entry.time, "number");
+  const wav = f.transcription.requests[0].wav;
+  assert.equal(wav.readUInt16LE(22), 1);
+  assert.equal(wav.readUInt32LE(24), 48000);
+  assert.equal(wav.length, 44 + 48000 * 2 * 0.4);
+  assert.equal(
+    f.calls.filter((c) => Array.isArray(c) && c[0] === "member").length,
+    1,
+  );
+  assert.equal(f.bot.status().transcription.count, 2);
+});
+
+test("uncached bot identity is checked before subscribing and failed name lookup falls back to id", async (t) => {
+  const f = await captureFixture(t);
+  const guild = f.guilds.get(A);
+  guild.members.fetch = async (id) => {
+    if (id === "unknown-bot") return { user: { bot: true } };
+    throw new Error("not found");
+  };
+  f.receiver.speak("unknown-bot", speechPcm());
+  f.receiver.speak("unknown-person");
+  await until(() => f.receiver.subscriptions.has("unknown-person"));
+  assert.equal(f.receiver.subscriptions.has("unknown-bot"), false);
+  f.receiver.speak("unknown-person", speechPcm());
+  await f.receiver.pause("unknown-person");
+  await until(() => f.transcription.entries.length === 1);
+  assert.equal(f.transcription.entries[0].speakerName, "unknown-person");
+});
+
+test("disconnect, recovery and preserved connection moves flush capture without duplicate listeners", async (t) => {
+  const f = await captureFixture(t);
+  const c = f.connections[0];
+  f.receiver.speak("alice", speechPcm());
+  c.set("disconnected");
+  assert.equal(f.receiver.speaking.listenerCount("start"), 0);
+  c.set("ready");
+  await until(() => f.transcription.entries.length === 1);
+  await until(
+    () =>
+      f.receiver.subscriptions.has("alice") &&
+      !f.receiver.subscriptions.get("alice").destroyed,
+  );
+  f.receiver.speak("alice", speechPcm());
+  await f.bot.connect(A, A.slice(0, -1) + "3");
+  await until(() => f.transcription.entries.length === 2);
+  assert.equal(f.connections.length, 1);
+  assert.equal(f.receiver.speaking.listenerCount("start"), 1);
+  await until(
+    () =>
+      f.receiver.subscriptions.has("alice") &&
+      !f.receiver.subscriptions.get("alice").destroyed,
+  );
+  await f.say();
+  await until(() => f.transcription.entries.length === 3);
+  await f.bot.disconnect({ farewell: false });
+  assert.equal(f.receiver.speaking.listenerCount("start"), 0);
+  f.transcription.change(true);
+  assert.equal(f.receiver.speaking.listenerCount("start"), 0);
+});
+
+test("close flushes partial capture, drains results before farewell and prevents further intake", async (t) => {
+  const stt = fakeTranscription();
+  let resolve;
+  stt.transcribe = () =>
+    new Promise((r) => {
+      resolve = r;
+    });
+  const order = [];
+  stt.add = (entry) => {
+    order.push("record");
+    stt.entries.push(entry);
+  };
+  const f = await captureFixture(t, {
+    transcription: stt,
+    greeting: (kind) => {
+      if (kind === "leave") order.push("farewell");
+      return null;
+    },
+  });
+  f.receiver.speak("alice", speechPcm());
+  const closing = f.bot.close();
+  assert.equal(f.receiver.speaking.listenerCount("start"), 0);
+  f.receiver.speak("late", speechPcm());
+  await until(() => resolve);
+  resolve("途中の発言も保存");
+  await closing;
+  assert.deepEqual(order, ["record", "farewell"]);
+  assert.equal(stt.entries.length, 1);
+  assert.equal(stt.listeners.size, 0);
+  assert.deepEqual(stt.drops, []);
+});
+
+test("shutdown deadline aborts in-flight work and drops the exact remaining count even if service ignores abort", async (t) => {
+  const stt = fakeTranscription();
+  let signal, resolve;
+  stt.transcribe = (_wav, opts) => {
+    signal = opts.signal;
+    return new Promise((r) => {
+      resolve = r;
+    });
+  };
+  const f = await captureFixture(t, {
+    transcription: stt,
+    timeouts: { transcription: 20 },
+  });
+  await f.say();
+  await until(() => signal);
+  await f.say();
+  f.receiver.speak("alice", speechPcm());
+  await f.bot.close();
+  assert.ok(signal.aborted);
+  assert.deepEqual(stt.drops, [["shutdown", 3]]);
+  resolve("遅すぎる結果");
+  await tick();
+  assert.equal(stt.entries.length, 0);
+  assert.equal(f.bot.status().transcription.dropped, 3);
+});
+
+test("backlog keeps at most 200 queued utterances and evicts the oldest", async (t) => {
+  const stt = fakeTranscription();
+  let release;
+  const seen = [];
+  stt.transcribe = async (wav) => {
+    seen.push(wav.readInt16LE(44));
+    if (seen.length === 1)
+      await new Promise((r) => {
+        release = r;
+      });
+    return "発言";
+  };
+  const f = await captureFixture(t, { transcription: stt });
+  for (let n = 1; n <= 203; n++) {
+    const pcm = speechPcm();
+    for (let offset = 0; offset < pcm.length; offset += 2)
+      pcm.writeInt16LE(n, offset);
+    f.receiver.speak("alice", pcm);
+    await f.receiver.pause("alice");
+  }
+  assert.equal(f.bot.status().transcription.pending, 200);
+  assert.deepEqual(stt.drops, [
+    ["backlog", 1],
+    ["backlog", 1],
+  ]);
+  release();
+  await until(() => stt.entries.length === 201);
+  assert.deepEqual(seen, [1, ...Array.from({ length: 200 }, (_, i) => i + 4)]);
+});
+
+test("echo comparison survives a transcription wait over 60 seconds and deleted orders", async (t) => {
+  const stt = fakeTranscription();
+  const text = "ファイアボールを唱えます。味方は少し下がってください。";
+  let resolve;
+  stt.transcribe = () =>
+    new Promise((r) => {
+      resolve = r;
+    });
+  const f = await captureFixture(t, { transcription: stt, autoIdle: false });
+  f.engine.orderText = () => text;
+  f.emit("reading");
+  await until(() => f.resources.length === 1);
+  await f.say();
+  await until(() => resolve);
+  f.players[0].emit("idle");
+  f.engine.orderText = () => null;
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 120000 });
+  // Trigger history pruning with another completed capture before resolving.
+  await f.say();
+  resolve(text);
+  await until(() => f.bot.status().transcription.pending === 0);
+  resolve("扉を開けて中に入ります");
+  await until(() => stt.entries.length === 1);
+  assert.equal(stt.entries[0].text, "扉を開けて中に入ります");
+});
+
+test("greeting text participates in echo filtering", async (t) => {
+  const stt = fakeTranscription();
+  const text = "声の準備が整いました。物語を始めましょう。";
+  stt.transcribe = async () => text;
+  const f = await captureFixture(t, {
+    transcription: stt,
+    greetingText: () => text,
+    greeting: (kind) => (kind === "enter" ? Buffer.alloc(100) : null),
+  });
+  await f.say();
+  await tick();
+  assert.equal(stt.entries.length, 0);
+});
+
+test("STT and packet failures are throttled and do not stop speech playback", async (t) => {
+  const errors = [],
+    stt = fakeTranscription();
+  stt.transcribe = async () => {
+    throw new Error("private service details");
+  };
+  const f = await captureFixture(t, {
+    transcription: stt,
+    onError: (e) => errors.push(e),
+  });
+  await f.say();
+  await f.say();
+  f.receiver.speak("alice", Buffer.from([255]), Buffer.from([255]));
+  await f.receiver.pause("alice");
+  f.emit("still-playing");
+  await until(() => f.resources.length === 1);
+  assert.equal(errors.filter((e) => e.includes("文字起こしに失敗")).length, 1);
+  assert.equal(errors.filter((e) => e.includes("パケット")).length, 1);
+  assert.equal(f.bot.status().transcription.failed, 2);
+  assert.deepEqual(stt.drops, [
+    ["error", 1],
+    ["error", 1],
+  ]);
+  assert.doesNotMatch(errors.join(" "), /private service details/);
+});

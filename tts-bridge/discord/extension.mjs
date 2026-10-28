@@ -37,6 +37,7 @@ const defaultVoice = {
 export function createExtension({
   engine,
   dataDir,
+  transcription = null,
   botFactory = createBot,
   installed = dependenciesInstalled(),
   log = (message) => console.error(`[Discord] ${message}`),
@@ -218,8 +219,11 @@ export function createExtension({
     try {
       const created = await botFactory({
         engine,
+        transcription,
         token: settings.token,
         greeting,
+        greetingText: (kind) =>
+          settings.greeting[kind === "enter" ? "enterText" : "leaveText"],
         onError: report,
         designSettings: () => settings.design,
       });
@@ -249,7 +253,11 @@ export function createExtension({
     tail = result.catch(() => {});
     return result;
   }
-  const ready = serial(startBot);
+  const ready = serial(async () => {
+    // Restore login and the selected channel, but require a new VC entry action.
+    settings.autoConnect = false;
+    await startBot(false);
+  });
   ready.catch(() => {});
   async function status() {
     let channels = [];
@@ -266,6 +274,14 @@ export function createExtension({
         ? "connecting"
         : (bot?.status().state ?? (error ? "error" : "logged-out")),
       error: error || bot?.status().error || "",
+      transcription: {
+        enabled: !!transcription,
+        ready: !!transcription?.ready(),
+        count: 0,
+        error: "",
+        ...transcription?.snapshot?.(),
+        ...bot?.status().transcription,
+      },
       botName: bot?.status().botName ?? "",
       inviteUrl: bot?.status().inviteUrl ?? "",
       channels,

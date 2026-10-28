@@ -271,7 +271,11 @@ try {
   for (const path of [modelsPath, "/api/v1/admin/credits"])
     await request(path, "GET", undefined, "", 401);
   const catalog = await request(modelsPath);
-  assert.equal(catalog.models.length, 8);
+  assert.equal(catalog.models.filter((m) => m.task === "synthesis").length, 8);
+  assert.equal(
+    catalog.models.filter((m) => m.task === "recognition").length,
+    16,
+  );
   assert.ok(catalog.models.some((m) => m.choice === "irodori-tts:q8_0"));
   assert.ok(catalog.models.some((m) => m.choice === "irodori-tts-large:q4_k"));
   assert.ok(isAbsolute(catalog.defaultDir));
@@ -280,7 +284,17 @@ try {
   assert.equal(changed.dir, modelDir);
   assert.ok(changed.models.every((m) => !m.fetched));
   const credits = await request("/api/v1/admin/credits");
-  assert.equal(credits.entries.length, 2);
+  assert.deepEqual(
+    credits.entries.map((entry) => entry.title),
+    [
+      "TRPG Voice Bridge",
+      "speech.cpp",
+      "Qwen3-ASR-0.6B",
+      "Qwen3-ASR-1.7B",
+      "ReazonSpeech v2",
+      "Parakeet TDT-CTC 0.6B (ja)",
+    ],
+  );
   assert.equal(
     credits.entries[0].license,
     readFileSync(join(packageDir, "LICENSE"), "utf8"),

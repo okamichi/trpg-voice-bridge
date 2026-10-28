@@ -141,8 +141,28 @@ test("settings persist privately, token never returned, toggle and reconnect hon
   await f.request("settings", "PUT", { channel: { guildId: B, channelId: B } });
   assert.deepEqual(f.calls.at(-1), ["connect", B, B]);
   await f.ext.close();
+  const beforeRestart = f.calls.length;
   const restart = f.create();
   await restart.ready;
+  assert.deepEqual(f.calls.slice(beforeRestart), [["login", "private-token"]]);
+  assert.equal(
+    (await f.request("status", "GET", undefined, restart)).data.autoConnect,
+    false,
+  );
+  await f.request(
+    "settings",
+    "PUT",
+    { channel: { guildId: A, channelId: A } },
+    restart,
+  );
+  assert.deepEqual(f.calls.slice(beforeRestart), [["login", "private-token"]]);
+  await f.request(
+    "settings",
+    "PUT",
+    { channel: { guildId: B, channelId: B } },
+    restart,
+  );
+  await f.request("connect", "POST", {}, restart);
   assert.deepEqual(f.calls.at(-1), ["connect", B, B]);
   await f.request("disconnect", "POST", {}, restart);
   await restart.close();
@@ -401,4 +421,38 @@ test("voice selected for greetings is reported as used even when Bot is disabled
     body: { enterText: "こんにちは", leaveText: "", voiceProfileId: "voice" },
   });
   assert.deepEqual(ext.voiceProfileUses(), { voice: ["Discord入退室"] });
+});
+
+test("transcription bridge and greeting text are passed to Bot and status includes shared counts without login", async (t) => {
+  let count = 12,
+    error = "";
+  const transcription = {
+    ready: () => !error,
+    snapshot: () => ({ enabled: true, count, error }),
+  };
+  const f = setup(t, { transcription });
+  assert.deepEqual((await f.request("status")).data.transcription, {
+    enabled: true,
+    ready: true,
+    count: 12,
+    error: "",
+  });
+  await f.request("settings", "PUT", { enabled: true, token: "secret" });
+  assert.equal(f.bots[0].options.transcription, transcription);
+  assert.equal(
+    f.bots[0].options.greetingText("enter"),
+    f.saved().greeting.enterText,
+  );
+  assert.equal(
+    f.bots[0].options.greetingText("leave"),
+    f.saved().greeting.leaveText,
+  );
+  count = 15;
+  error = "書き出せません";
+  assert.deepEqual((await f.request("status")).data.transcription, {
+    enabled: true,
+    ready: false,
+    count: 15,
+    error,
+  });
 });

@@ -57,11 +57,12 @@
             </p>
             <form id="startupForm">
               <label
-                >保存先（データディレクトリ）<input
-                  id="startupDataDir"
-                  type="text"
+                >保存先（データフォルダ）<input id="startupDataDir" type="text"
               /></label>
               <small class="field-note" id="startupDataDirNote"></small>
+              <small class="field-note"
+                >この保存先はTTSサーバが利用する参照音声等も含まれるため、TTSサーバ接続の変更ごとに用意すること。</small
+              >
               <label
                 >待ち受けアドレス<select id="startupHost">
                   <option value="127.0.0.1">
@@ -108,10 +109,12 @@
       </summary>
       <div class="step-body">
         <p id="referenceProgress" role="status" hidden></p>
-        <p class="field-note">TTSサーバを切り替える際は、一度Bridgeを終了して使用中のdataディレクトリをバックアップしておいてください。外部TTSで保存している参照音声はそのまま引き継げません</p>
+        <p class="field-note">
+          TTSサーバを切り替える際は、一度Bridgeを終了して使用中のdataディレクトリをバックアップしておいてください。外部TTSで保存している参照音声はそのまま引き継げません
+        </p>
         <div class="part" id="runtimeSection" hidden>
           <h3>TTSの起動設定</h3>
-          <p id="runtimeStatus"></p>
+          <p id="runtimeStatus" role="status" style="white-space: pre-line"></p>
           <div class="callout" id="restartNotice" hidden>
             <p id="restartNoticeRestart" hidden>
               保存した設定を反映するには、Bridgeを再起動してください。
@@ -179,6 +182,64 @@
                 </button>
               </div>
 
+              <fieldset id="sttFields">
+                <legend>文字起こし（STT）</legend>
+                <label
+                  ><input
+                    id="sttEnabled"
+                    type="checkbox"
+                  />Discordのボイスチャンネルの発言を文字起こしする</label
+                >
+                <p>
+                  ボイスチャンネルの参加者に伝えて、同意を得てから有効にしてください。準備が完了すると、Botのスピーカーミュートが解除されます。
+                </p>
+                <label
+                  >STTモデルの絶対パス<input id="sttModel" type="text"
+                /></label>
+                <small class="field-note"
+                  >モデルを直接指定するか、一覧からダウンロードし、設定を保存してください。</small
+                >
+                <div id="sttCatalog">
+                  <h3>一覧からダウンロード</h3>
+                  <p id="sttCatalogListError" class="error" hidden></p>
+                  <div id="sttCatalogBody" hidden>
+                    <label
+                      >STTモデル<select id="sttCatalogModel"></select
+                    ></label>
+                    <button type="button" id="sttCatalogUse"></button>
+                    <button
+                      type="button"
+                      class="secondary"
+                      id="sttCatalogCancel"
+                      hidden
+                    >
+                      中止
+                    </button>
+                    <div id="sttCatalogProgressRow" hidden>
+                      <progress
+                        id="sttCatalogProgress"
+                        max="1"
+                        value="0"
+                      ></progress>
+                      <small id="sttCatalogProgressText"></small>
+                    </div>
+                  </div>
+                  <p id="sttCatalogStatus" role="status" hidden></p>
+                  <p class="muted">
+                    モデルの保存先はTTSの「一覧からダウンロード」と共通です。モデルのライセンスは「クレジット」で確認できます。
+                  </p>
+                </div>
+                <label
+                  >文字起こしの書き出し先<input id="sttLogDir" type="text"
+                /></label>
+                <small id="sttLogDirDefault" class="field-note"
+                  >既定: Bridgeの保存先/transcripts</small
+                >
+                <button type="button" class="secondary" id="sttLogDirReset">
+                  既定に戻す
+                </button>
+              </fieldset>
+
               <label
                 >内蔵TTSのポート<input
                   id="runtimePort"
@@ -191,7 +252,7 @@
             <button>次回起動の設定を保存</button>
           </form>
           <p>
-            保存した設定はBridgeを再起動すると反映されます。声は保存先のvoicesフォルダーに保存されます。
+            保存した設定はBridgeを再起動すると反映されます。声は保存先のvoicesフォルダに保存されます。
           </p>
         </div>
         <div class="part" id="providerSection">
@@ -222,7 +283,7 @@
       <summary>
         <span class="step-num"></span
         ><span class="step-title">Collectorの接続</span
-        ><small>VTTからチャットを取り込む場合のみ</small
+        ><small>VTTからチャットを取り込む</small
         ><span class="state" id="collectorState"></span>
       </summary>
       <div class="step-body">

@@ -1,3 +1,4 @@
+import { openStep } from "./admin-helpers.mjs";
 import { test, expect, chromium } from "@playwright/test";
 import { createServer } from "node:http";
 import { mkdtempSync } from "node:fs";
@@ -59,16 +60,15 @@ test("Fly extension auto-detection, manual selection and original message IDs re
       {
         channel: "chromium",
         headless: true,
-        args: [
-          `--disable-extensions-except=${extension}`,
-          `--load-extension=${extension}`,
-        ],
+        ignoreDefaultArgs: ["--disable-extensions"],
+        args: ["--enable-unsafe-extension-debugging"],
       },
     );
-    const worker =
-      context.serviceWorkers()[0] ??
-      (await context.waitForEvent("serviceworker"));
-    const extensionId = new URL(worker.url()).host;
+    const cdp = await context.browser().newBrowserCDPSession();
+    const { id: extensionId } = await cdp.send("Extensions.loadUnpacked", {
+      path: extension,
+    });
+    await cdp.detach();
     const vtt = await context.newPage();
     await vtt.goto(`http://127.0.0.1:${server.address().port}/fixture`);
     const popup = await context.newPage();
@@ -99,6 +99,7 @@ test("Fly extension auto-detection, manual selection and original message IDs re
     await expect(popup.locator("#status")).toContainText("確認コード:");
     const admin = await context.newPage();
     await admin.goto(app.adminUrl());
+    await openStep(admin, "stepCollector");
     await expect(admin.locator("#pairings")).not.toBeEmpty();
     await admin.getByRole("button", { name: "承認", exact: true }).click();
     await expect(admin.locator("#pairingSection")).not.toBeVisible();

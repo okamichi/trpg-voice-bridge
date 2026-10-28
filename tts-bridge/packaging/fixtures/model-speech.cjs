@@ -19,6 +19,15 @@ if (process.argv[3] === "models") {
         "irodori-tts-large",
         "irodori-tts-mf",
         "qwen3-tts",
+        ...(mode() === "recognition"
+          ? [
+              "qwen3-asr-0.6b",
+              "qwen3-asr-1.7b",
+              "reazonspeech-v2",
+              "parakeet-tdt_ctc-0.6b-ja",
+              "parakeet-tdt-0.6b-v3",
+            ]
+          : []),
       ].map((name) => ({
         name,
         repository: `owner/${name}-GGUF`,

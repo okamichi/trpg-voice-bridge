@@ -68,6 +68,11 @@ test("Chatter extension joins without Collector, shares chat with Player and res
     initial,
     dataDir: mkdtempSync(join(tmpdir(), "chatter-e2e-")),
     localOrigin: "http://127.0.0.1:0",
+    runtime: {
+      settings: { active: { stt: { enabled: true, logDir: "" } } },
+      snapshot: () => ({ stt: { enabled: true, status: "ready", error: "" } }),
+      onSttChange: () => () => {},
+    },
   });
   await new Promise((r) => app.server.listen(0, "127.0.0.1", r));
   let context, webContext, secondApp;
@@ -159,6 +164,24 @@ test("Chatter extension joins without Collector, shares chat with Player and res
     await panel.locator("#joinChatter").click();
     await expect(panel.locator("#status")).toContainText("接続しました");
     await expect(panel.locator("#connection")).not.toBeVisible();
+    app.engine.transcriptLog.add({
+      time: Date.now(),
+      speakerId: "123",
+      speakerName: "参加者",
+      seconds: 1,
+      text: "拡張の文字起こし",
+    });
+    const transcriptDownload = panel.waitForEvent("download");
+    await panel.locator("#downloadTranscripts").click();
+    const transcriptFile = await transcriptDownload;
+    expect(transcriptFile.suggestedFilename()).toMatch(
+      /^transcripts-\d{8}-\d{6}\.zip$/,
+    );
+    expect(
+      readFileSync(await transcriptFile.path()).includes(
+        Buffer.from("拡張の文字起こし"),
+      ),
+    ).toBe(true);
     const saved = await panel.evaluate(
       async () => (await chrome.storage.session.get("participant")).participant,
     );
@@ -256,6 +279,45 @@ test("Chatter extension joins without Collector, shares chat with Player and res
       })
       .toBe(true);
     const side = await attachPanel(cdp, target.targetId);
+    const sideDownloadDir = mkdtempSync(
+      join(tmpdir(), "chatter-transcript-download-"),
+    );
+    await cdp.send("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: sideDownloadDir,
+      eventsEnabled: true,
+    });
+    const downloadEvent = new Promise((resolve) =>
+      cdp.once("Browser.downloadWillBegin", resolve),
+    );
+    // expect.poll fails at once on a thrown error, so stay falsy until the
+    // panel has loaded and shows the download.
+    await expect
+      .poll(() =>
+        side.evaluate(
+          'document.querySelector("#transcriptDownloads")?.hidden === false',
+        ),
+      )
+      .toBe(true);
+    await side.evaluate(
+      'document.querySelector("#downloadTranscripts").click()',
+    );
+    const sideDownload = await downloadEvent;
+    expect(sideDownload.suggestedFilename).toMatch(
+      /^transcripts-\d{8}-\d{6}\.zip$/,
+    );
+    await expect
+      .poll(() => {
+        try {
+          return readFileSync(
+            join(sideDownloadDir, sideDownload.suggestedFilename),
+          ).includes(Buffer.from("拡張の文字起こし"));
+        } catch {
+          return false;
+        }
+      })
+      .toBe(true);
+
     await expect
       .poll(() =>
         side.evaluate('document.querySelector("#log")?.children.length'),

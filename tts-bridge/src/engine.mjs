@@ -106,10 +106,18 @@ export class Engine extends EventEmitter {
     this.emit("notification", msg);
     return msg;
   }
+  orderText(orderId) {
+    const order = this.orders.get(orderId);
+    return order?.displayText || order?.text || null;
+  }
   snapshot() {
     return {
       ...this.metadata(),
       type: "state.snapshot",
+      transcription: {
+        enabled: !!this.transcriptLog,
+        count: this.transcriptLog?.count ?? 0,
+      },
       serverTime: Date.now(),
       baseline: this.store.maxSeq(),
       accepting: this.accepting,

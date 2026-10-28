@@ -1,3 +1,4 @@
+import { openStep } from "./admin-helpers.mjs";
 import { test, expect, chromium } from "@playwright/test";
 import {
   mkdirSync,
@@ -83,19 +84,18 @@ test("CCFOLIA defaults to main, selects public IDs, filters dice/privacy and rel
       {
         channel: "chromium",
         headless: true,
-        args: [
-          `--disable-extensions-except=${extension}`,
-          `--load-extension=${extension}`,
-        ],
+        ignoreDefaultArgs: ["--disable-extensions"],
+        args: ["--enable-unsafe-extension-debugging"],
       },
     );
     await context.route("https://ccfolia.com/**", (route) =>
       route.fulfill({ contentType: "text/html", body: fixture }),
     );
-    const worker =
-      context.serviceWorkers()[0] ??
-      (await context.waitForEvent("serviceworker"));
-    const extensionId = new URL(worker.url()).host;
+    const cdp = await context.browser().newBrowserCDPSession();
+    const { id: extensionId } = await cdp.send("Extensions.loadUnpacked", {
+      path: extension,
+    });
+    await cdp.detach();
     const vtt = await context.newPage();
     await vtt.goto("https://ccfolia.com/rooms/room");
     // Initial history is excluded even with a future timestamp.
@@ -135,6 +135,7 @@ test("CCFOLIA defaults to main, selects public IDs, filters dice/privacy and rel
     await expect(popup.locator("#status")).toContainText("確認コード:");
     const admin = await context.newPage();
     await admin.goto(app.adminUrl());
+    await openStep(admin, "stepCollector");
     await expect(admin.locator("#pairings")).not.toBeEmpty();
     await admin.getByRole("button", { name: "承認", exact: true }).click();
     await expect(admin.locator("#pairingSection")).not.toBeVisible();

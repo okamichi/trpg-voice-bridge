@@ -1,3 +1,4 @@
+import { transcriptStamp } from "../transcripts.mjs";
 import { readFileSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { check, HttpError, hash, voiceSchema } from "../contracts.mjs";
@@ -211,9 +212,10 @@ export async function participantRoutes(ctx, req, res, url) {
       return wave(res, preview.wav);
     }
   }
-  const room = /^\/api\/v1\/rooms\/([\w.-]+)\/(state|audio\/([\w-]+))$/.exec(
-    path,
-  );
+  const room =
+    /^\/api\/v1\/rooms\/([\w.-]+)\/(state|transcripts|audio\/([\w-]+))$/.exec(
+      path,
+    );
   if (room && method === "GET") {
     if (authAdmin(req)) admin(req);
     else {
@@ -226,6 +228,22 @@ export async function participantRoutes(ctx, req, res, url) {
         ...engine.snapshot(),
         ...(!authAdmin(req) ? { participantId: player(req).id } : {}),
       });
+    if (room[2] === "transcripts") {
+      check(ctx.transcripts, "文字起こしは無効です", 404);
+      const zip = ctx.transcripts.zip();
+      res.writeHead(200, {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="transcripts-${transcriptStamp()}.zip"`,
+        "Cache-Control": "no-store",
+        "Access-Control-Expose-Headers":
+          "Content-Disposition, X-Transcript-Count",
+        "X-Transcript-Count": String(
+          ctx.transcripts.count + ctx.transcripts.chats,
+        ),
+      });
+      res.end(zip);
+      return true;
+    }
     const a = engine.audio.get(room[3]);
     check(
       a &&
