@@ -141,8 +141,28 @@ test("settings persist privately, token never returned, toggle and reconnect hon
   await f.request("settings", "PUT", { channel: { guildId: B, channelId: B } });
   assert.deepEqual(f.calls.at(-1), ["connect", B, B]);
   await f.ext.close();
+  const beforeRestart = f.calls.length;
   const restart = f.create();
   await restart.ready;
+  assert.deepEqual(f.calls.slice(beforeRestart), [["login", "private-token"]]);
+  assert.equal(
+    (await f.request("status", "GET", undefined, restart)).data.autoConnect,
+    false,
+  );
+  await f.request(
+    "settings",
+    "PUT",
+    { channel: { guildId: A, channelId: A } },
+    restart,
+  );
+  assert.deepEqual(f.calls.slice(beforeRestart), [["login", "private-token"]]);
+  await f.request(
+    "settings",
+    "PUT",
+    { channel: { guildId: B, channelId: B } },
+    restart,
+  );
+  await f.request("connect", "POST", {}, restart);
   assert.deepEqual(f.calls.at(-1), ["connect", B, B]);
   await f.request("disconnect", "POST", {}, restart);
   await restart.close();

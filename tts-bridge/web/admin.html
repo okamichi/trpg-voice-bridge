@@ -57,11 +57,14 @@
             </p>
             <form id="startupForm">
               <label
-                >保存先（データディレクトリ）<input
+                >保存先（データフォルダ）<input
                   id="startupDataDir"
                   type="text"
               /></label>
               <small class="field-note" id="startupDataDirNote"></small>
+              <small class="field-note"
+                >この保存先はTTSサーバが利用する参照音声等も含まれるため、TTSサーバ接続の変更ごとに用意すること。</small
+              >
               <label
                 >待ち受けアドレス<select id="startupHost">
                   <option value="127.0.0.1">
@@ -248,7 +251,7 @@
             <button>次回起動の設定を保存</button>
           </form>
           <p>
-            保存した設定はBridgeを再起動すると反映されます。声は保存先のvoicesフォルダーに保存されます。
+            保存した設定はBridgeを再起動すると反映されます。声は保存先のvoicesフォルダに保存されます。
           </p>
         </div>
         <div class="part" id="providerSection">
@@ -279,7 +282,7 @@
       <summary>
         <span class="step-num"></span
         ><span class="step-title">Collectorの接続</span
-        ><small>VTTからチャットを取り込む場合のみ</small
+        ><small>VTTからチャットを取り込む</small
         ><span class="state" id="collectorState"></span>
       </summary>
       <div class="step-body">

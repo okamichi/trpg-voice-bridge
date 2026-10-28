@@ -24,8 +24,7 @@ const catalogs = [
 const modelTask = (model) => model?.task ?? "synthesis";
 const gb = (bytes) => (bytes / 1e9).toFixed(2);
 const $ = (id) => document.getElementById(id);
-let stepsInitialized = false,
-  previousPending = 0,
+let previousPending,
   refreshTimer,
   shuttingDown = false,
   canRestart = false,
@@ -118,13 +117,7 @@ async function refresh() {
     "stopped",
   ].includes(d.tts.status);
   const collectorConnected = d.collectors.some((c) => c.online);
-  if (!stepsInitialized) {
-    $("stepTts").open = !ttsConnected;
-    $("stepCollector").open = !!pending.length;
-    $("stepSession").open = true;
-    $("stepEnd").open = true;
-    stepsInitialized = true;
-  } else if (!previousPending && pending.length) {
+  if (previousPending === 0 && pending.length) {
     $("stepCollector").open = true;
   }
   previousPending = pending.length;
@@ -139,7 +132,7 @@ async function refresh() {
       ? "承認待ち"
       : collectorConnected
         ? "接続中"
-        : "任意・未接続",
+        : "未接続",
     pending.length ? "warn" : collectorConnected ? "ok" : "",
   );
   setState(
@@ -299,7 +292,7 @@ async function refresh() {
         button.onclick = () => {
           if (
             !confirm(
-              `「${issue.id}」をBridgeの管理対象から外しますか？\nすべての接続先との登録記録を外し、残っているWAVは保存先のvoices-detachedフォルダーへ退避します。TTS側の音声やキャラの声設定は削除しません。同名音声がTTS側に残る間は、同じIDで新規登録できません。`,
+              `「${issue.id}」をBridgeの管理対象から外しますか？\nすべての接続先との登録記録を外し、残っているWAVは保存先のvoices-detachedフォルダへ退避します。TTS側の音声やキャラの声設定は削除しません。同名音声がTTS側に残る間は、同じIDで新規登録できません。`,
             )
           )
             return;
@@ -664,7 +657,7 @@ async function restartBridge(request) {
   $("notice").textContent =
     "再起動を確認できませんでした。Bridgeを起動した端末の表示を確認してください。";
 }
-async function mountStartup(restarted) {
+async function mountStartup() {
   startup = await api("startup");
   $("stepTts").before($("startupTemplate").content.cloneNode(true));
   renderStartup();
@@ -672,7 +665,6 @@ async function mountStartup(restarted) {
   const separator = dataDir.includes("\\") ? "\\" : "/";
   $("sttLogDirDefault").textContent =
     `既定: ${dataDir.replace(/[\\/]$/, "")}${separator}transcripts`;
-  $("stepStartup").open = Boolean(restarted && startup.lastRestart);
   $("startupForm").onsubmit = (event) => {
     event.preventDefault();
     run(async () => {
@@ -745,7 +737,7 @@ await run(async () => {
   $("sentenceSplitThreshold").value = sentenceSplitThresholdChars;
   await refresh();
   if (canRestart) {
-    await mountStartup(restarted);
+    await mountStartup();
     if (restarted)
       $("notice").textContent =
         startup.lastRestart?.error ?? "Bridgeを再起動しました。";

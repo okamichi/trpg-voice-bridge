@@ -212,8 +212,8 @@ TTSを動かしたまま、管理画面で「1 TTSの準備」の「接続テス
 ### Discord Botを使う場合
 
 1. [Discordでの利用方法](discord.md)に従ってBotを作り、Discordのサーバーへ招待します。
-2. 「2 Discord Bot」で「Discord Botに接続する」をオンにし、Botトークンを入れて「保存してログイン」を押します。
-3. 「ボイスチャンネル」を選び、「接続」を押します。
+2. 「2 Discord Bot」で「Discord Botを利用する」をオンにし、Botトークンを入れて「保存してログイン」を押します。
+3. 「ボイスチャンネル」を選び、「VCに入室」を押します。
 
 Aでは、2節の `npm --prefix discord ci` が必要です。Discordで聞く参加者は、Playerの音声を有効にしないでください。
 

@@ -253,7 +253,11 @@ export function createExtension({
     tail = result.catch(() => {});
     return result;
   }
-  const ready = serial(startBot);
+  const ready = serial(async () => {
+    // Restore login and the selected channel, but require a new VC entry action.
+    settings.autoConnect = false;
+    await startBot(false);
+  });
   ready.catch(() => {});
   async function status() {
     let channels = [];

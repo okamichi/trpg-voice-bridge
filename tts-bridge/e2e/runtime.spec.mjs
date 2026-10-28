@@ -390,7 +390,9 @@ test("Windows menu offers the Vulkan and CPU builds and saves the chosen one", a
   try {
     const url = app.adminUrl().replace(":0/", `:${app.server.address().port}/`);
     await page.goto(url);
+    await expect(page.locator("details[open]")).toHaveCount(0);
     await openStep(page, "stepTts");
+    await openStep(page, "stepEnd");
     await expect(
       page.locator("#shutdownSection [data-shutdown]"),
     ).toBeVisible();
