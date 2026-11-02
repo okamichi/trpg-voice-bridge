@@ -502,3 +502,44 @@ for (const accepting of [true, false]) {
     assert.equal(f.uploads.length, 2);
   });
 }
+
+test("MF details offer only seed and ignore stale CFG/steps fields", () => {
+  const design = Object.create(VoiceDesign.prototype);
+  const s = {
+    task: { job: { id: "mf" } },
+    version: 0,
+    constraints: { fixedSteps: 4, cfg: false },
+    voice: {
+      id: "v",
+      name: "声",
+      provider: "irodori-local",
+      voiceId: "none",
+      caption: "",
+      seed: "1",
+      steps: 20,
+      speed: 1,
+      cfgScaleText: 3,
+    },
+    sample: "こんにちは",
+  };
+  const modal = design.modal(s, "advanced");
+  assert.deepEqual(
+    modal.components.map((r) => r.components[0].custom_id),
+    ["seed"],
+  );
+  design.edit(
+    s,
+    {
+      fields: {
+        getTextInputValue: (key) => {
+          assert.equal(key, "seed");
+          return "2";
+        },
+      },
+    },
+    "advanced",
+  );
+  assert.equal(s.voice.seed, "2");
+  assert.equal(s.voice.steps, 20);
+  assert.equal(s.voice.cfgScaleText, 3);
+});

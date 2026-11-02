@@ -313,6 +313,7 @@
       /></label>
       <details>
         <summary>声の詳細設定</summary>
+        <p id="voiceConstraints" role="status"></p>
         <label>seed<input name="seed" pattern="[0-9]{1,19}" required /></label>
         <label
           >生成ステップ数<input
@@ -323,7 +324,7 @@
             required
         /></label>
         <label
-          >テキストCFG<input
+          >テキストCFG（0〜10・空欄はモデル既定値）<input
             name="cfgScaleText"
             type="number"
             min="0"
@@ -331,7 +332,7 @@
             step="0.1"
         /></label>
         <label
-          >説明CFG<input
+          >説明CFG（0〜10・空欄はモデル既定値）<input
             name="cfgScaleCaption"
             type="number"
             min="0"
@@ -339,7 +340,7 @@
             step="0.1"
         /></label>
         <label
-          >参照音声CFG<input
+          >参照音声CFG（0〜10・空欄はモデル既定値）<input
             name="cfgScaleSpeaker"
             type="number"
             min="0"

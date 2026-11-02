@@ -25,6 +25,9 @@ let room,
   previewUrl,
   previewId,
   generation = 0;
+let constraintValues = null,
+  constraintRequest = 0;
+let constraints = { status: "unknown", fixedSteps: null, cfg: true };
 let characterKey;
 let organizerKey,
   organizerGeneration = 0,
@@ -61,6 +64,7 @@ export async function refreshCharacters(roomId = room) {
     const result = await (await request("characters")).json();
     if (!active || version !== requestVersion) return;
     data = result;
+    if (dialog.open) void refreshConstraints(generation);
     characterListener(data);
     renderVoiceOrganizer();
     const nextKey = JSON.stringify([room, data]);
@@ -280,13 +284,56 @@ function loadVoice() {
     ...data.voiceDefaults,
     name: `${before.displayName}の声`,
   };
+  constraintValues = null;
   for (const key of fields) form.elements[key].value = values[key] ?? "";
+  applyConstraints();
   const users = data.characters
     .filter((c) => c.voiceProfileId === v?.id)
     .map((c) => c.displayName);
   $("voiceUsers").textContent = users.length
     ? `この声の編集は、使用中の全キャラ（${users.join("、")}）に反映されます。`
     : "新しい声を作成します。保存後は他のキャラも選べます。";
+}
+function applyConstraints() {
+  const fixed = constraints.fixedSteps;
+  const keys = ["steps", "cfgScaleText", "cfgScaleCaption", "cfgScaleSpeaker"];
+  if (fixed != null && !constraintValues)
+    constraintValues = Object.fromEntries(
+      keys.map((key) => [key, form.elements[key].value]),
+    );
+  if (fixed == null && constraintValues) {
+    for (const key of keys) form.elements[key].value = constraintValues[key];
+    constraintValues = null;
+  }
+  for (const key of [
+    "steps",
+    "cfgScaleText",
+    "cfgScaleCaption",
+    "cfgScaleSpeaker",
+  ]) {
+    form.elements[key].disabled =
+      constraints.status === "unknown" ||
+      (key === "steps" ? fixed != null : !constraints.cfg);
+    if (fixed != null) form.elements[key].value = key === "steps" ? fixed : "";
+  }
+  $("voiceConstraints").textContent =
+    constraints.status === "unknown"
+      ? "TTSの設定を確認できません。ステップ数・CFGは接続確認後に編集できます。"
+      : fixed != null
+        ? "Small-MFは4ステップ固定です。CFGは使用しません。既存の声の通常モデル用設定は保持します。"
+        : "";
+}
+async function refreshConstraints(current) {
+  const requestId = ++constraintRequest;
+  let next;
+  try {
+    next = await (await request("voice-constraints")).json();
+  } catch {
+    next = { status: "unknown", fixedSteps: null, cfg: true };
+  }
+  if (current !== generation || requestId !== constraintRequest) return;
+  constraints = next;
+  applyConstraints();
 }
 async function edit(ch) {
   stopOrganizerPreview();
@@ -301,11 +348,15 @@ async function edit(ch) {
   );
   form.elements.voice.value =
     ch.voiceProfileId ?? data.voiceProfiles[0]?.id ?? "new";
+  constraints = { status: "unknown", fixedSteps: null, cfg: true };
   loadVoice();
   dialog.showModal();
   const current = generation;
   try {
-    await refreshReferenceVoices(current);
+    await Promise.all([
+      refreshReferenceVoices(current),
+      refreshConstraints(current),
+    ]);
   } catch (e) {
     $("editorStatus").textContent =
       `参照音声一覧を取得できません。既存の設定は利用できます。${e.message}`;
@@ -321,6 +372,17 @@ async function refreshReferenceVoices(current) {
 function voiceValue() {
   const v = { id: voiceBefore?.id ?? "new", provider: "irodori-local" };
   for (const key of fields) {
+    if (form.elements[key].disabled) {
+      const saved = voiceBefore ?? data.voiceDefaults;
+      const value =
+        !voiceBefore && constraints.fixedSteps != null
+          ? key === "steps"
+            ? 4
+            : undefined
+          : saved[key];
+      if (value !== undefined) v[key] = value;
+      continue;
+    }
     const value = form.elements[key].value;
     if (key.startsWith("cfg") && value === "") continue;
     v[key] = [
@@ -335,7 +397,10 @@ function voiceValue() {
   }
   return v;
 }
-form.elements.voice.onchange = loadVoice;
+form.elements.voice.onchange = () => {
+  loadVoice();
+  void refreshConstraints(generation);
+};
 form.onsubmit = async (e) => {
   e.preventDefault();
   $("saveCharacter").disabled = true;
@@ -410,7 +475,10 @@ $("registerReference").onclick = async () => {
   try {
     await request("voices", "POST", { previewId, voiceId });
     if (current !== generation) return;
-    await refreshReferenceVoices(current);
+    await Promise.all([
+      refreshReferenceVoices(current),
+      refreshConstraints(current),
+    ]);
     form.elements.voiceId.value = voiceId;
     $("referenceRegister").hidden = true;
     $("editorStatus").textContent =

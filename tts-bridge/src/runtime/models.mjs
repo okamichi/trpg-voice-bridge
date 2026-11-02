@@ -111,12 +111,23 @@ export class SpeechModels {
     return data.models
       .filter(
         (m) =>
-          ["irodori-tts", "irodori-tts-large"].includes(m.name) ||
-          recognitionModels.has(m.name),
+          ["irodori-tts", "irodori-tts-large", "irodori-tts-mf"].includes(
+            m.name,
+          ) || recognitionModels.has(m.name),
+      )
+      .sort(
+        (a, b) =>
+          Number(a.name === "irodori-tts-mf") -
+          Number(b.name === "irodori-tts-mf"),
       )
       .flatMap((m) =>
         m.files
-          .filter((f) => ["q8_0", "q6_k", "q5_k", "q4_k"].includes(f.type))
+          .filter((f) =>
+            (m.name === "irodori-tts-mf"
+              ? ["f16", "q4_k"]
+              : ["q8_0", "q6_k", "q5_k", "q4_k"]
+            ).includes(f.type),
+          )
           .map((f) => ({
             choice: `${m.name}:${f.type}`,
             task: recognitionModels.has(m.name) ? "recognition" : "synthesis",
@@ -124,6 +135,12 @@ export class SpeechModels {
               .split("/")
               .at(-1)
               .replace(/-GGUF$/, "")} ${f.type.toUpperCase()}`,
+            description:
+              m.name === "irodori-tts-mf"
+                ? f.type === "f16"
+                  ? "メモリ16GBの無印M1〜M4向け"
+                  : "Windows CPU向け・省メモリ軽量版"
+                : "",
             size: f.size,
             path: f.path,
             url: f.url,

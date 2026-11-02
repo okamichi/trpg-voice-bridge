@@ -1,5 +1,6 @@
 import { parseDelivery } from "../delivery.mjs";
 import { check, voiceSchema, DELIVERY_CAPTION_MODES } from "./contracts.mjs";
+import { voiceConstraints } from "./voice-constraints.mjs";
 import { speechModel } from "./tts-api.mjs";
 export const AUDIO_LIMIT = 25 * 1024 * 1024;
 export async function readLimited(response, limit) {
@@ -106,6 +107,7 @@ export function payload(text, v, p, deliveryCaptionMode = "append", model) {
           .join("。");
   check(caption.length <= 1000, "演技指示込みのcaptionは1000文字までです");
   if (p.type === "speech") {
+    const constraints = voiceConstraints(model);
     const voiceId = hasReference ? v.voiceId : "none";
     const takes = (name) => model?.speech.options?.some((o) => o.name === name);
     check(
@@ -124,7 +126,7 @@ export function payload(text, v, p, deliveryCaptionMode = "append", model) {
       voice: voiceId,
       response_format: "pcm",
       speed: v.speed,
-      steps: v.steps,
+      steps: constraints.fixedSteps ?? v.steps,
       seed: Number(BigInt(v.seed) % (1n << 53n)),
       ...(takes("instructions") ? { instructions: caption } : {}),
     };
@@ -133,7 +135,8 @@ export function payload(text, v, p, deliveryCaptionMode = "append", model) {
       ["cfgScaleCaption", "cfg_scale_instructions", Boolean(caption.trim())],
       ["cfgScaleSpeaker", "cfg_scale_speaker", hasReference],
     ])
-      if (active && takes(name) && v[key] != null) body[name] = v[key];
+      if (constraints.cfg && active && takes(name) && v[key] != null)
+        body[name] = v[key];
     return JSON.stringify(body);
   }
   const irodori = {

@@ -504,7 +504,7 @@ test("model downloads resume across reload, apply completion once, cancel and ch
     await page.reload();
     await openStep(page, "stepTts");
     await page.locator("#runtimeMode").selectOption("bundled:metal");
-    await expect(page.locator("#catalogModel option")).toHaveCount(8);
+    await expect(page.locator("#catalogModel option")).toHaveCount(10);
     await expect(page.locator("#runtimeModel")).toHaveValue("");
     await expect(page.locator("#catalogStatus")).toBeEmpty();
     await page.locator("#catalogModel").selectOption("irodori-tts:q8_0");
@@ -781,7 +781,7 @@ test("corrupt models.json can be repaired using visible directory controls", asy
     await expect(page.locator("#modelDir")).toBeEditable();
     await page.locator("#modelDirReset").click();
     await expect(page.locator("#catalogListError")).toBeHidden();
-    await expect(page.locator("#catalogModel option")).toHaveCount(8);
+    await expect(page.locator("#catalogModel option")).toHaveCount(10);
     expect(JSON.parse(readFileSync(join(dataDir, "models.json")))).toEqual({
       dir: "",
     });

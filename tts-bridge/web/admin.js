@@ -862,7 +862,10 @@ function renderModels() {
             : m.partial
               ? `・途中 ${Math.floor((m.partial / m.size) * 100)}%`
               : "";
-        return new Option(`${m.label}（${gb(m.size)}GB）${suffix}`, m.choice);
+        return new Option(
+          `${m.label}（${gb(m.size)}GB）${m.description ? `・${m.description}` : ""}${suffix}`,
+          m.choice,
+        );
       }),
     );
     const m = choices.find((m) => m.choice === selected) ?? choices[0];
