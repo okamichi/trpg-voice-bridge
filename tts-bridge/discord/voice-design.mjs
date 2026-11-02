@@ -1,3 +1,4 @@
+import { currentVoiceConstraints } from "../src/voice-constraints.mjs";
 import { check, hash, voiceSchema } from "../src/contracts.mjs";
 import { AUDIO_LIMIT } from "../src/provider.mjs";
 import { encodeOggOpus, loadOpus } from "../src/audio-format.mjs";
@@ -90,6 +91,8 @@ export class VoiceDesign {
             ),
           ],
     };
+    if (s.constraints?.fixedSteps != null)
+      data.content += "\nSmall-MF：4ステップ固定・CFGは使用しません。";
     if (!s.done && s.audioStatus)
       data.content += `\n\n**${s.audioStatus}**\n受付：<t:${Math.floor(s.audioStarted / 1000)}:R>`;
     if (replaceAudio || s.done) {
@@ -221,6 +224,8 @@ export class VoiceDesign {
     });
     this.engine.notify("characters.changed");
     try {
+      await this.refreshConstraints(s);
+
       await this.publish(s, true);
       this.validate(s);
       const wav = await this.engine.preview(
@@ -277,11 +282,20 @@ export class VoiceDesign {
     });
     this.engine.notify("characters.changed");
   }
+  async refreshConstraints(s) {
+    s.constraints = await currentVoiceConstraints(
+      s.task.provider,
+      this.engine.options.fetchImpl,
+    );
+  }
+  advancedFields(s) {
+    return s.constraints?.fixedSteps != null ? advanced.slice(0, 1) : advanced;
+  }
   modal(s, kind) {
     return {
       custom_id: this.id(s, `${kind}Save`),
       title: kind === "basic" ? "声の基本設定" : "声の詳細設定",
-      components: (kind === "basic" ? basic : advanced).map(
+      components: (kind === "basic" ? basic : this.advancedFields(s)).map(
         ([key, label, max_length]) =>
           row({
             type: 4,
@@ -298,7 +312,7 @@ export class VoiceDesign {
   edit(s, interaction, kind) {
     const voice = structuredClone(s.voice);
     let sample = s.sample;
-    for (const [key] of kind === "basic" ? basic : advanced) {
+    for (const [key] of kind === "basic" ? basic : this.advancedFields(s)) {
       const value = interaction.fields.getTextInputValue(key).trim();
       if (key === "sample") sample = value;
       else if (key.startsWith("cfg") && !value) delete voice[key];
@@ -423,6 +437,7 @@ export class VoiceDesign {
         409,
       );
       if (action === "basic" || action === "advanced") {
+        await this.refreshConstraints(s);
         await i.showModal(this.modal(s, action));
         return;
       }
@@ -447,6 +462,15 @@ export class VoiceDesign {
             409,
           );
           s.task.voice = structuredClone(s.voice);
+          if (s.constraints?.fixedSteps != null) {
+            s.task.voice.steps = 4;
+            for (const key of [
+              "cfgScaleText",
+              "cfgScaleCaption",
+              "cfgScaleSpeaker",
+            ])
+              delete s.task.voice[key];
+          }
           s.notice = "この候補を登録中です…";
           await this.publish(s);
           this.validate(s);
@@ -460,6 +484,13 @@ export class VoiceDesign {
           );
           await this.generate(s);
         } else if (["basicSave", "advancedSave"].includes(action)) {
+          const previousSteps = s.constraints?.fixedSteps;
+          await this.refreshConstraints(s);
+          check(
+            previousSteps === s.constraints.fixedSteps,
+            "TTSモデルが変更されました。設定フォームを開き直してください",
+            409,
+          );
           this.edit(s, i, action === "basicSave" ? "basic" : "advanced");
           s.busy = false;
           await this.publish(s, true);

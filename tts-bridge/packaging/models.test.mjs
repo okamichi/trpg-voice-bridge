@@ -44,7 +44,16 @@ const choice = "irodori-tts:q4_k";
 test("catalog filters, defaults, persistence, validation and directory-scoped in-flight requests", async (t) => {
   const { models, dir, options } = await setup(t);
   const first = await models.list();
-  assert.equal(first.models.length, 8);
+  assert.equal(first.models.length, 10);
+  assert.deepEqual(
+    first.models
+      .filter((m) => m.choice.startsWith("irodori-tts-mf:"))
+      .map((m) => m.choice)
+      .sort(),
+    ["irodori-tts-mf:f16", "irodori-tts-mf:q4_k"],
+  );
+  await assert.rejects(models.pull("irodori-tts-mf:q8_0"), { status: 400 });
+  await assert.rejects(models.pull("irodori-tts:f16"), { status: 400 });
   assert.equal(first.dir, first.defaultDir);
   await assert.rejects(models.setDir("relative"), { status: 400 });
   writeFileSync(join(dir, "mode"), "slow");
@@ -229,11 +238,11 @@ test("recognition catalog exposes four Japanese models", async (t) => {
   const listed = await models.list();
   const recognition = listed.models.filter((m) => m.task === "recognition");
   assert.equal(recognition.length, 16);
-  assert.equal(listed.models.filter((m) => m.task === "synthesis").length, 8);
+  assert.equal(listed.models.filter((m) => m.task === "synthesis").length, 10);
   assert.ok(
     !listed.models.some(
       (m) =>
-        m.choice.endsWith(":f16") ||
+        (m.choice.endsWith(":f16") && m.choice !== "irodori-tts-mf:f16") ||
         m.choice.startsWith("parakeet-tdt-0.6b-v3:"),
     ),
   );

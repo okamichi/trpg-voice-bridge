@@ -271,12 +271,14 @@ try {
   for (const path of [modelsPath, "/api/v1/admin/credits"])
     await request(path, "GET", undefined, "", 401);
   const catalog = await request(modelsPath);
-  assert.equal(catalog.models.filter((m) => m.task === "synthesis").length, 8);
+  assert.equal(catalog.models.filter((m) => m.task === "synthesis").length, 10);
   assert.equal(
     catalog.models.filter((m) => m.task === "recognition").length,
     16,
   );
   assert.ok(catalog.models.some((m) => m.choice === "irodori-tts:q8_0"));
+  for (const choice of ["irodori-tts-mf:f16", "irodori-tts-mf:q4_k"])
+    assert.ok(catalog.models.some((m) => m.choice === choice));
   assert.ok(catalog.models.some((m) => m.choice === "irodori-tts-large:q4_k"));
   assert.ok(isAbsolute(catalog.defaultDir));
   const modelDir = join(temporary, "日本語 models");

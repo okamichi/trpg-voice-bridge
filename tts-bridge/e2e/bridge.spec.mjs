@@ -936,3 +936,43 @@ test("voice deletion API rejects use added after rendering and supports authoriz
     app.store.config.voiceProfiles.length,
   );
 });
+
+test("MF locks controls and preserves saved RF settings", async ({ page }) => {
+  let mf = true;
+  await page.route("**/voice-constraints", (route) =>
+    route.fulfill({
+      json: { status: "ready", fixedSteps: mf ? 4 : null, cfg: !mf },
+    }),
+  );
+  await page.goto(invite);
+  await expect(page.locator("#status")).toContainText("接続しました");
+  await page.getByRole("tab", { name: "キャラ・声設定" }).click();
+  await page.getByRole("button", { name: "試聴・変更" }).first().click();
+  const original = structuredClone(
+    app.store.config.voiceProfiles.find(
+      (v) => v.id === app.store.config.characters[0].voiceProfileId,
+    ),
+  );
+  await expect(page.locator('[name="steps"]')).toHaveValue("4");
+  for (const key of [
+    "steps",
+    "cfgScaleText",
+    "cfgScaleCaption",
+    "cfgScaleSpeaker",
+  ])
+    await expect(page.locator(`[name="${key}"]`)).toBeDisabled();
+  await page.locator('[name="caption"]').fill("静かな声");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator("#characterEditor")).not.toBeVisible();
+  const saved = app.store.config.voiceProfiles.find(
+    (v) => v.id === original.id,
+  );
+  expect(saved.steps).toBe(original.steps);
+  expect(saved.cfgScaleText).toBe(original.cfgScaleText);
+  mf = false;
+  await page.getByRole("button", { name: "試聴・変更" }).first().click();
+  await expect(page.locator('[name="steps"]')).toBeEnabled();
+  await expect(page.locator('[name="steps"]')).toHaveValue(
+    String(original.steps),
+  );
+});

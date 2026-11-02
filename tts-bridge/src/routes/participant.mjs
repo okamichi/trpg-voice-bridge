@@ -1,3 +1,4 @@
+import { currentVoiceConstraints } from "../voice-constraints.mjs";
 import { transcriptStamp } from "../transcripts.mjs";
 import { readFileSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -132,7 +133,7 @@ export async function participantRoutes(ctx, req, res, url) {
     throw new HttpError(405, "許可されていない操作です");
   }
   const settingsRoute =
-    /^\/api\/v1\/rooms\/([\w.-]+)\/(characters(?:\/([\w.-]+))?|voice-profiles\/([\w.-]+)|voices|previews)$/.exec(
+    /^\/api\/v1\/rooms\/([\w.-]+)\/(characters(?:\/([\w.-]+))?|voice-profiles\/([\w.-]+)|voices|voice-constraints|previews)$/.exec(
       path,
     );
   if (settingsRoute) {
@@ -171,6 +172,12 @@ export async function participantRoutes(ctx, req, res, url) {
       });
       return json(res, 200, result);
     }
+    if (method === "GET" && settingsRoute[2] === "voice-constraints")
+      return json(
+        res,
+        200,
+        await currentVoiceConstraints(engine.config.provider),
+      );
     if (method === "GET" && settingsRoute[2] === "voices")
       return json(res, 200, await voices());
     if (["PATCH", "DELETE"].includes(method) && settingsRoute[3]) {
