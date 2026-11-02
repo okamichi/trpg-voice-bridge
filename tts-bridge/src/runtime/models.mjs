@@ -115,6 +115,11 @@ export class SpeechModels {
             m.name,
           ) || recognitionModels.has(m.name),
       )
+      .sort(
+        (a, b) =>
+          Number(a.name === "irodori-tts-mf") -
+          Number(b.name === "irodori-tts-mf"),
+      )
       .flatMap((m) =>
         m.files
           .filter((f) =>
