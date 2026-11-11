@@ -232,12 +232,18 @@ test("credits use the supplied repository for the link and label", async () => {
   );
 });
 
-test("recognition catalog exposes four Japanese models", async (t) => {
+test("recognition catalog exposes five Japanese models", async (t) => {
   const { models, dir } = await setup(t);
   writeFileSync(join(dir, "mode"), "recognition");
   const listed = await models.list();
   const recognition = listed.models.filter((m) => m.task === "recognition");
-  assert.equal(recognition.length, 16);
+  assert.equal(recognition.length, 20);
+  assert.deepEqual(
+    recognition
+      .filter((m) => m.choice.startsWith("haas-ja-v1.0:"))
+      .map((m) => m.choice),
+    ["q8_0", "q6_k", "q5_k", "q4_k"].map((type) => `haas-ja-v1.0:${type}`),
+  );
   assert.equal(listed.models.filter((m) => m.task === "synthesis").length, 10);
   assert.ok(
     !listed.models.some(
@@ -254,14 +260,13 @@ test(
   async (t) => {
     const { models, dir } = await setup(t);
     writeFileSync(join(dir, "mode"), "recognition");
-    await models.pull("qwen3-asr-0.6b:q8_0");
+    await models.pull("haas-ja-v1.0:q8_0");
     await assert.rejects(models.pull(choice), { status: 409 });
     await models.finished;
     assert.equal(models.job.status, "done");
     assert.ok(
-      (await models.list()).models.find(
-        (m) => m.choice === "qwen3-asr-0.6b:q8_0",
-      ).fetched,
+      (await models.list()).models.find((m) => m.choice === "haas-ja-v1.0:q8_0")
+        .fetched,
     );
   },
 );

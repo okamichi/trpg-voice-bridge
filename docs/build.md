@@ -77,6 +77,8 @@ npm run package:speech
 | macOS   | `speech`、`bridge-supervisor`                                                   |
 | Windows | `speech.exe`（CPU版）、`speech-vulkan.exe`（Vulkan版）、`bridge-supervisor.exe` |
 
+現在の同梱版はspeech.cpp **v0.10.1**（`0355510`）と、同版が指定するggml（`e1a9ac1`）です。ソースの固定コミットとSHA-256は `tts-bridge/packaging/speech-lock.json` で管理します。
+
 `bridge-supervisor` は、内蔵TTSの起動と終了を管理し、同じ保存先でBridgeが二重に起動しないようにするプログラムです。
 
 Aの `npm start` は、このフォルダのspeech.cppを使います。別のフォルダにあるビルドを使う場合は、環境変数 `TTS_SPEECH_RUNTIME_DIR` にそのフォルダを指定します。どちらの場合も、ソースの `packaging/speech-lock.json` と同じspeech.cppとggmlからビルドしたものでないと、`npm start` は起動しません。
