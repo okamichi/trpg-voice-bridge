@@ -14,6 +14,7 @@ const recognitionModels = new Set([
   "qwen3-asr-0.6b",
   "qwen3-asr-1.7b",
   "reazonspeech-v2",
+  "haas-ja-v1.0",
   "parakeet-tdt_ctc-0.6b-ja",
 ]);
 

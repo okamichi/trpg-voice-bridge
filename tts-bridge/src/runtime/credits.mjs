@@ -29,6 +29,7 @@ export function credits(
       "reazon-research/reazonspeech-nemo-v2",
       "Apache License 2.0",
     ],
+    ["Haas-ja-v1.0", "third-intelligence/Haas-ja-v1.0", "Apache License 2.0"],
     [
       "Parakeet TDT-CTC 0.6B (ja)",
       "nvidia/parakeet-tdt_ctc-0.6b-ja",

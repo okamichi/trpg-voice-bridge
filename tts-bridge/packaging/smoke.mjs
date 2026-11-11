@@ -274,12 +274,14 @@ try {
   assert.equal(catalog.models.filter((m) => m.task === "synthesis").length, 10);
   assert.equal(
     catalog.models.filter((m) => m.task === "recognition").length,
-    16,
+    20,
   );
   assert.ok(catalog.models.some((m) => m.choice === "irodori-tts:q8_0"));
   for (const choice of ["irodori-tts-mf:f16", "irodori-tts-mf:q4_k"])
     assert.ok(catalog.models.some((m) => m.choice === choice));
   assert.ok(catalog.models.some((m) => m.choice === "irodori-tts-large:q4_k"));
+  for (const type of ["q8_0", "q6_k", "q5_k", "q4_k"])
+    assert.ok(catalog.models.some((m) => m.choice === `haas-ja-v1.0:${type}`));
   assert.ok(isAbsolute(catalog.defaultDir));
   const modelDir = join(temporary, "日本語 models");
   const changed = await request(`${modelsPath}/dir`, "PUT", { dir: modelDir });
@@ -294,6 +296,7 @@ try {
       "Qwen3-ASR-0.6B",
       "Qwen3-ASR-1.7B",
       "ReazonSpeech v2",
+      "Haas-ja-v1.0",
       "Parakeet TDT-CTC 0.6B (ja)",
     ],
   );
