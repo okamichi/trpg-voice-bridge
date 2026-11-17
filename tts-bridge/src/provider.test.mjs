@@ -94,3 +94,24 @@ test("text and caption cannot inject TTS JSON fields and voice paths are rejecte
     );
   assert.equal(calls, 1);
 });
+
+test("a voice with Mini's emotion boost stays readable, and nothing else is taken for it", async () => {
+  const { voiceSchema } = await import("./contracts.mjs");
+  const voice = (fields = {}) => ({
+    id: "v",
+    name: "v",
+    provider: "irodori-local",
+    voiceId: "r",
+    caption: "",
+    seed: "1",
+    speed: 1,
+    steps: 12,
+    ...fields,
+  });
+  voiceSchema(voice());
+  voiceSchema(voice({ emotionBoost: true }));
+  for (const value of [false, "on", 1])
+    assert.throws(() => voiceSchema(voice({ emotionBoost: value })), {
+      message: /感情ブースト/,
+    });
+});

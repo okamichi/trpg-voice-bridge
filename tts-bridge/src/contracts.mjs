@@ -119,10 +119,17 @@ export function voiceSchema(v) {
     "cfgScaleText",
     "cfgScaleCaption",
     "cfgScaleSpeaker",
+    // TRPG Voice Bridge Mini's 感情ブースト, kept so that Mini's data stays
+    // readable here; Bridge does not use it.
+    "emotionBoost",
   ];
   check(
     Object.keys(v).every((k) => supported.includes(k)),
     "未対応の音声パラメーターです",
+  );
+  check(
+    v.emotionBoost === undefined || v.emotionBoost === true,
+    "感情ブーストの設定が不正です",
   );
   check(id(v.id) && str(v.name), "声のID・名称が不正です");
   check(
